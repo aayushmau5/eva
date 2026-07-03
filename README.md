@@ -41,6 +41,10 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
       - [ ] Q/A
   - [ ] Compaction
   - [ ] Subagents
+  - [ ] Modes or Characters(?)(like amp)
+    - [ ] Deep
+    - [ ] Librarian
+    - [ ] Oracle
   - [ ] Extensions
     - [ ] Perhpas "sharing" as an extension
   - [ ] Sharing(login?)
