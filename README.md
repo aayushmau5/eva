@@ -1,5 +1,7 @@
 # Eva
 
+![shinji](./shinji.jpg)
+
 A coding harness built in Elixir, inspired by [tau](https://twotimespi.dev/).
 
 > Work in progress — things may move, break, and change.
