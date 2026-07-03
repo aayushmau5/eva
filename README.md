@@ -4,6 +4,8 @@ A coding harness built in Elixir, inspired by [tau](https://twotimespi.dev/).
 
 > Work in progress — things may move, break, and change.
 
+![under construction](https://cyber.dabamos.de/88x31/construction.gif)
+
 # Idea
 
 Current ideas, subject to change.
