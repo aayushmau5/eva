@@ -7,10 +7,10 @@ defmodule Eva.AI.LmStudioTest do
     test "starts and accepts change_config" do
       {:ok, pid} = LmStudio.start_link(name: nil)
 
-      assert {:reply, :ok, new_state} =
-               GenServer.call(pid, {:change_config, %{model: "test"}})
+      assert :ok = GenServer.call(pid, {:change_config, %{model: "test"}})
 
-      assert new_state.model == "test"
+      state = GenServer.call(pid, :get_state)
+      assert state.model == "test"
 
       GenServer.stop(pid)
     end
@@ -31,9 +31,9 @@ defmodule Eva.AI.LmStudioTest do
       {deltas, end_event} = collect_events([])
 
       assert %Events.ProviderResponseEnd{
-        message: %{content: content},
-        finish_reason: finish_reason
-      } = end_event
+               message: %{content: content},
+               finish_reason: finish_reason
+             } = end_event
 
       assert content == Enum.join(Enum.reverse(deltas), "")
       assert is_binary(finish_reason) or is_nil(finish_reason)

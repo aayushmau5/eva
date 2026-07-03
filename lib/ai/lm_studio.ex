@@ -31,6 +31,10 @@ defmodule Eva.AI.LmStudio do
     {:reply, :ok, config}
   end
 
+  def handle_call(:get_state, _from, state) do
+    {:reply, state, state}
+  end
+
   @impl true
   def handle_cast({:run, prompt, listener_pid}, state) do
     # TODO: think if we need listener_pid here or perhaps at init? Architectural decision.
@@ -91,7 +95,7 @@ defmodule Eva.AI.LmStudio do
     )
   end
 
-  defp process_sse_line(line, {parts, reason} = acc, listener_pid) do
+  defp process_sse_line(line, {parts, finish_reason} = acc, listener_pid) do
     case Sse.parse(line) do
       :done ->
         acc
@@ -99,7 +103,7 @@ defmodule Eva.AI.LmStudio do
       {:line, json} ->
         delta = Sse.parse_delta(json)
 
-        reason = delta.finish_reason || reason
+        finish_reason = delta.finish_reason || finish_reason
 
         parts =
           if is_binary(delta.content) and delta.content != "" do
@@ -115,7 +119,7 @@ defmodule Eva.AI.LmStudio do
             parts
           end
 
-        {parts, reason}
+        {parts, finish_reason}
     end
   rescue
     _ -> acc
