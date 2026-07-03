@@ -6,7 +6,7 @@ A coding harness built in Elixir, inspired by [tau](https://twotimespi.dev/).
 
 # Idea
 
-Idea & Current path, subject to change.
+Current ideas, subject to change.
 
 ## Architecture
 
@@ -14,16 +14,39 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
 
 ## Feature Checklist
 
-- [x] Fork
-- [ ] TUI (`ex_ratatui`) + BYO-FE
-- [ ] Slash commands (`/usage`, `/providers`, `/login`, `/logout`, ...)
-- [ ] Tool calls
-- [ ] Q/A
-- [ ] Compact
-- [ ] Subagents
-- [ ] Pretty lil animations
-- [ ] Sharing
 - [ ] Distributed architecture
+  - [ ] At what point do we handle external node messages?
+    - [ ] Split between:
+      - [ ] Providers
+      - [ ] Harness
+- [x] Very basic provider(currently LMStudio based API only)
+  - [ ] Handle envs & config
+  - [ ] Switch providers
+- [ ] Agent Harness
+  - [ ] The agent loop
+  - [ ] Handling distributed node messages
+  - [ ] Sessions
+  - [ ] Memory
+  - [ ] Prompts
+    - [ ] Follow-up
+    - [ ] Queue
+  - [ ] Tools
+    - [ ] Tool calls
+      - [ ] Elixir native?
+      - [ ] read/write/edit/bash tools
+      - [ ] Q/A
+  - [ ] Compaction
+  - [ ] Subagents
+  - [ ] Extensions
+    - [ ] Perhpas "sharing" as an extension
+  - [ ] Sharing(login?)
+    - [ ] Atproto
+      - [ ] PDS as sync layer(inspired by tiles.run)?
+    - (Fun idea): Indieweb?
+  - (Experiment): Explore with mob as distributed node connection?
+- [ ] TUI (`ex_ratatui`) + BYO-FE
+  - [ ] Slash commands (`/usage`, `/providers`, `/login`, `/logout`, ...)
+  - [ ] Pretty lil animations
 
 ## What Sets It Apart
 
