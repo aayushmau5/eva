@@ -57,11 +57,11 @@ defmodule Eva.AI.Events do
     A complete tool call requested by the model.
     """
     use TypedStruct
+    alias Eva.Agent.Tools
 
     typedstruct do
       field :type, String.t(), default: "tool_call"
-      # TODO: replace with ToolCall struct once defined
-      field :tool_call, map()
+      field :tool_call, Tools.ToolCall.t()
     end
   end
 
@@ -70,11 +70,11 @@ defmodule Eva.AI.Events do
     The provider has completed a model response.
     """
     use TypedStruct
+    alias Eva.Agent.Messages
 
     typedstruct do
       field :type, String.t(), default: "response_end"
-      # TODO: replace with AssistantMessage struct once defined
-      field :message, map()
+      field :message, Messages.AssistantMessage.t()
       field :finish_reason, String.t() | nil, default: nil
     end
   end

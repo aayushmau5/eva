@@ -2,6 +2,7 @@ defmodule Eva.AI.LmStudioTest do
   use ExUnit.Case
 
   alias Eva.AI.{LmStudio, Events}
+  alias Eva.Agent
 
   describe "GenServer lifecycle" do
     test "starts and accepts change_config" do
@@ -31,7 +32,7 @@ defmodule Eva.AI.LmStudioTest do
       {deltas, end_event} = collect_events([])
 
       assert %Events.ProviderResponseEnd{
-               message: %{content: content},
+               message: %Agent.Messages.AssistantMessage{content: content},
                finish_reason: finish_reason
              } = end_event
 

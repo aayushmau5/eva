@@ -2,6 +2,7 @@ defmodule Eva.AI.LmStudio do
   use GenServer
 
   alias Eva.AI.{Events, Config, StreamState}
+  alias Eva.Agent
 
   @base_url "http://localhost:1234/v1"
   @endpoint "/chat/completions"
@@ -112,14 +113,23 @@ defmodule Eva.AI.LmStudio do
   end
 
   defp emit_stream_outcome(
-         {:ok, %StreamState{content_rev: cr, finish_reason: fr, status: s}},
+         {:ok, %StreamState{content_rev: cr, finish_reason: fr, status: s, tool_calls: tcs}},
          pid
        ) do
     if s && s >= 400 do
       send(pid, %Events.ProviderError{message: "HTTP #{s}", data: %{status: s}})
     else
+      tool_calls = StreamState.build_tool_calls(tcs)
+
+      Enum.each(tool_calls, fn tool_call ->
+        send(pid, %Events.ProviderToolCall{tool_call: tool_call})
+      end)
+
       send(pid, %Events.ProviderResponseEnd{
-        message: %{content: cr |> Enum.reverse() |> Enum.join("")},
+        message: %Agent.Messages.AssistantMessage{
+          content: cr |> Enum.reverse() |> Enum.join(""),
+          tool_calls: tool_calls
+        },
         finish_reason: fr
       })
     end

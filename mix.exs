@@ -7,7 +7,14 @@ defmodule Eva.MixProject do
       version: "0.1.0",
       elixir: "~> 1.20",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      aliases: aliases()
+    ]
+  end
+
+  def cli do
+    [
+      preferred_envs: [precommit: :test]
     ]
   end
 
@@ -23,6 +30,12 @@ defmodule Eva.MixProject do
     [
       {:finch, "~> 0.23"},
       {:typedstruct, "~> 0.5"}
+    ]
+  end
+
+  defp aliases do
+    [
+      precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
     ]
   end
 end
