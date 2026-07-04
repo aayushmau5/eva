@@ -19,6 +19,10 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
 ## Feature Checklist
 
 - [ ] Distributed architecture
+  - [ ] How do we discover & connect to Evas in different machines?
+    - [ ] Tailscale?
+      - [ ] Most of the work is already done(Security, Discovery & Connection)
+      - [ ] Connections & Creds management
   - [ ] At what point do we handle external node messages?
     - [ ] Split between:
       - [ ] Providers

@@ -19,7 +19,12 @@ defmodule Eva.AI.LmStudio do
   end
 
   @impl true
-  def init(_opts) do
+  def init(opts) do
+    system_prompt = Keyword.get(opts, :system_prompt, @system_prompt)
+    reasoning_effort = Keyword.get(opts, :reasoning_effort)
+    messages = Keyword.get(opts, :messages, [])
+    tools = Keyword.get(opts, :tools, [])
+
     config = %Config{
       base_url: @base_url,
       endpoint: @endpoint,
@@ -27,12 +32,29 @@ defmodule Eva.AI.LmStudio do
       system_prompt: @system_prompt
     }
 
-    {:ok, config}
+    state = %{
+      config: config,
+      system_prompt: system_prompt,
+      reasoning_effort: reasoning_effort,
+      messages: messages,
+      tools: tools
+    }
+
+    {:ok, state}
   end
 
   @impl true
-  def handle_call({:change_config, config}, _from, _state) do
-    {:reply, :ok, config}
+  def handle_call({:change_config, config}, _from, state) do
+    {:reply, :ok, %{state | config: config}}
+  end
+
+  # Runtime system prompt change
+  def handle_call({:change_system_prompt, system_prompt}, _from, state) do
+    {:reply, :ok, %{state | system_prompt: system_prompt}}
+  end
+
+  def handle_call({:update_messages, messages}, _from, state) do
+    {:reply, :ok, %{state | messages: messages}}
   end
 
   def handle_call(:get_state, _from, state) do
@@ -40,55 +62,46 @@ defmodule Eva.AI.LmStudio do
   end
 
   @impl true
-  def handle_cast({:run, prompt, listener_pid}, state) do
-    Task.start(fn -> stream(state, prompt, listener_pid) end)
+  def handle_cast({:run, listener_pid}, state) do
+    if length(state.messages) > 0 do
+      Task.start(fn -> stream(state, listener_pid) end)
+    end
+
     {:noreply, state}
   end
 
-  defp stream(%Config{} = config, prompt, listener_pid) do
-    send(listener_pid, %Events.ProviderResponseStart{model: config.model})
+  defp stream(state, listener_pid) do
+    send(listener_pid, %Events.ProviderResponseStart{model: state.config.model})
 
-    body =
-      JSON.encode!(%{
-        model: config.model,
-        messages: [
-          %{role: "system", content: config.system_prompt},
-          %{role: "user", content: prompt}
-        ],
-        stream: true
-      })
-
-    request =
-      Finch.build(
-        :post,
-        config.base_url <> config.endpoint,
-        [{"content-type", "application/json"}],
-        body
-      )
-
-    state = %StreamState{}
+    stream_state = %StreamState{}
 
     stream_req =
-      Finch.stream(
-        request,
+      Finch.build(
+        :post,
+        state.config.base_url <> state.config.endpoint,
+        [{"content-type", "application/json"}],
+        build_req_body(state)
+      )
+      |> Finch.stream(
         Eva.Finch,
-        state,
+        stream_state,
         fn
-          {:status, status}, state ->
-            %{state | status: status}
+          {:status, status}, stream_state ->
+            %{stream_state | status: status}
 
-          {:headers, _}, state ->
-            state
+          {:headers, _}, stream_state ->
+            stream_state
 
-          {:trailers, _}, state ->
-            state
+          {:trailers, _}, stream_state ->
+            stream_state
 
-          {:data, data}, %StreamState{status: status} = state when status == nil or status < 400 ->
-            full_text = state.buffer <> data
+          {:data, data}, %StreamState{status: status} = stream_state
+          when status == nil or status < 400 ->
+            full_text = stream_state.buffer <> data
             lines = String.split(full_text, "\n")
 
             {content_rev, finish_reason} =
-              Enum.reduce(lines, {state.content_rev, state.finish_reason}, fn
+              Enum.reduce(lines, {stream_state.content_rev, stream_state.finish_reason}, fn
                 "data: " <> _ = line, {cr, fr} ->
                   parse_sse_line(line, cr, fr, listener_pid)
 
@@ -99,10 +112,15 @@ defmodule Eva.AI.LmStudio do
             last = List.last(lines) || ""
             buffer = if String.starts_with?(last, "data:"), do: "", else: last
 
-            %{state | content_rev: content_rev, finish_reason: finish_reason, buffer: buffer}
+            %{
+              stream_state
+              | content_rev: content_rev,
+                finish_reason: finish_reason,
+                buffer: buffer
+            }
 
-          {:data, _data}, state ->
-            state
+          {:data, _data}, stream_state ->
+            stream_state
         end,
         receive_timeout: 15_000
       )
@@ -126,6 +144,29 @@ defmodule Eva.AI.LmStudio do
           message: "Transport error: #{inspect(error)}"
         })
     end
+  end
+
+  defp build_req_body(state) do
+    body = %{
+      model: state.config.model,
+      messages:
+        [
+          %{role: "system", content: state.system_prompt}
+        ] ++ build_messages(state.messages),
+      tools: state.tools,
+      stream: true
+    }
+
+    body =
+      if state.reasoning_effort,
+        do: Map.merge(body, %{reasoning_effort: state.reasoning_effort}),
+        else: body
+
+    JSON.encode!(body)
+  end
+
+  defp build_messages(messages) do
+    Enum.map(messages, fn message -> %{role: "user", content: message} end)
   end
 
   defp parse_sse_line(line, content_rev, finish_reason, listener_pid) do

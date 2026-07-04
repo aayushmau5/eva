@@ -10,7 +10,7 @@ defmodule Eva.AI.LmStudioTest do
       assert :ok = GenServer.call(pid, {:change_config, %{model: "test"}})
 
       state = GenServer.call(pid, :get_state)
-      assert state.model == "test"
+      assert state.config.model == "test"
 
       GenServer.stop(pid)
     end
@@ -20,10 +20,10 @@ defmodule Eva.AI.LmStudioTest do
     @tag :external
     @tag timeout: 30_000
 
-    test "{:run, prompt, self()} streams events in order" do
-      {:ok, pid} = LmStudio.start_link(name: nil)
+    test "{:run, self()} streams events in order" do
+      {:ok, pid} = LmStudio.start_link(name: nil, messages: ["What's the weather?"])
 
-      GenServer.cast(pid, {:run, "What is the weather?", self()})
+      GenServer.cast(pid, {:run, self()})
 
       assert_receive %Events.ProviderResponseStart{model: model}, 5000
       assert is_binary(model)
