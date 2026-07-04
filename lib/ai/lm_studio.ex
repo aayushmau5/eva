@@ -1,12 +1,7 @@
 defmodule Eva.AI.LmStudio do
   use GenServer
 
-  alias Eva.AI.{Sse, Events}
-  alias Eva.AI.Config
-
-  defmodule StreamState do
-    defstruct content_rev: [], finish_reason: nil, buffer: "", status: nil
-  end
+  alias Eva.AI.{Events, Config, StreamState}
 
   @base_url "http://localhost:1234/v1"
   @endpoint "/chat/completions"
@@ -63,6 +58,7 @@ defmodule Eva.AI.LmStudio do
 
   @impl true
   def handle_cast({:run, listener_pid}, state) do
+    # Should we do this?
     if length(state.messages) > 0 do
       Task.start(fn -> stream(state, listener_pid) end)
     end
@@ -73,8 +69,6 @@ defmodule Eva.AI.LmStudio do
   defp stream(state, listener_pid) do
     send(listener_pid, %Events.ProviderResponseStart{model: state.config.model})
 
-    stream_state = %StreamState{}
-
     stream_req =
       Finch.build(
         :post,
@@ -84,66 +78,55 @@ defmodule Eva.AI.LmStudio do
       )
       |> Finch.stream(
         Eva.Finch,
-        stream_state,
-        fn
-          {:status, status}, stream_state ->
-            %{stream_state | status: status}
-
-          {:headers, _}, stream_state ->
-            stream_state
-
-          {:trailers, _}, stream_state ->
-            stream_state
-
-          {:data, data}, %StreamState{status: status} = stream_state
-          when status == nil or status < 400 ->
-            full_text = stream_state.buffer <> data
-            lines = String.split(full_text, "\n")
-
-            {content_rev, finish_reason} =
-              Enum.reduce(lines, {stream_state.content_rev, stream_state.finish_reason}, fn
-                "data: " <> _ = line, {cr, fr} ->
-                  parse_sse_line(line, cr, fr, listener_pid)
-
-                _, pair ->
-                  pair
-              end)
-
-            last = List.last(lines) || ""
-            buffer = if String.starts_with?(last, "data:"), do: "", else: last
-
-            %{
-              stream_state
-              | content_rev: content_rev,
-                finish_reason: finish_reason,
-                buffer: buffer
-            }
-
-          {:data, _data}, stream_state ->
-            stream_state
-        end,
+        %StreamState{},
+        fn event, acc -> handle_stream_event(event, acc, listener_pid) end,
         receive_timeout: 15_000
       )
 
-    case stream_req do
-      {:ok, %StreamState{content_rev: content_rev, finish_reason: finish_reason, status: status}} ->
-        if status && status >= 400 do
-          send(listener_pid, %Events.ProviderError{
-            message: "HTTP #{status}",
-            data: %{status: status}
-          })
-        else
-          send(listener_pid, %Events.ProviderResponseEnd{
-            message: %{content: content_rev |> Enum.reverse() |> Enum.join("")},
-            finish_reason: finish_reason
-          })
-        end
+    emit_stream_outcome(stream_req, listener_pid)
+  end
 
-      {:error, error, _} ->
-        send(listener_pid, %Events.ProviderError{
-          message: "Transport error: #{inspect(error)}"
-        })
+  defp handle_stream_event({:status, status}, stream_state, _listener_pid) do
+    %{stream_state | status: status}
+  end
+
+  defp handle_stream_event({:headers, _}, stream_state, _listener_pid) do
+    stream_state
+  end
+
+  defp handle_stream_event({:trailers, _}, stream_state, _listener_pid) do
+    stream_state
+  end
+
+  defp handle_stream_event({:data, data}, stream_state, listener_pid) do
+    {new_state, events} = StreamState.feed(stream_state, data)
+    emit_events(events, listener_pid)
+    new_state
+  end
+
+  defp emit_events(events, pid) do
+    Enum.each(events, fn
+      {:content, text} -> send(pid, %Events.ProviderTextDelta{delta: text})
+      {:thinking, text} -> send(pid, %Events.ProviderThinkingDelta{delta: text})
+    end)
+  end
+
+  defp emit_stream_outcome(
+         {:ok, %StreamState{content_rev: cr, finish_reason: fr, status: s}},
+         pid
+       ) do
+    if s && s >= 400 do
+      send(pid, %Events.ProviderError{message: "HTTP #{s}", data: %{status: s}})
+    else
+      send(pid, %Events.ProviderResponseEnd{
+        message: %{content: cr |> Enum.reverse() |> Enum.join("")},
+        finish_reason: fr
+      })
     end
+  end
+
+  defp emit_stream_outcome({:error, error, _}, pid) do
+    send(pid, %Events.ProviderError{message: "Transport error: #{inspect(error)}"})
   end
 
   defp build_req_body(state) do
@@ -167,32 +150,5 @@ defmodule Eva.AI.LmStudio do
 
   defp build_messages(messages) do
     Enum.map(messages, fn message -> %{role: "user", content: message} end)
-  end
-
-  defp parse_sse_line(line, content_rev, finish_reason, listener_pid) do
-    case Sse.parse(line) do
-      :done ->
-        {content_rev, finish_reason}
-
-      {:line, json} ->
-        delta = Sse.parse_delta(json)
-        finish_reason = delta.finish_reason || finish_reason
-
-        content_rev =
-          if is_binary(delta.content) and delta.content != "" do
-            send(listener_pid, %Events.ProviderTextDelta{delta: delta.content})
-            [delta.content | content_rev]
-          else
-            content_rev
-          end
-
-        if is_binary(delta.thinking) and delta.thinking != "" do
-          send(listener_pid, %Events.ProviderThinkingDelta{delta: delta.thinking})
-        end
-
-        {content_rev, finish_reason}
-    end
-  rescue
-    _ -> {content_rev, finish_reason}
   end
 end
