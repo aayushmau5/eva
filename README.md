@@ -29,8 +29,10 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
 - [ ] Agent Harness
   - [ ] The agent loop
   - [ ] Handling distributed node messages
-  - [ ] Sessions
-  - [ ] Memory
+  - [ ] Context
+    - [ ] Sessions
+    - [ ] Memory
+    - [ ] Compaction
   - [ ] Prompts
     - [ ] Follow-up
     - [ ] Queue
@@ -39,7 +41,6 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
       - [ ] Elixir native?
       - [ ] read/write/edit/bash tools
       - [ ] Q/A
-  - [ ] Compaction
   - [ ] Subagents
   - [ ] Modes or Characters(?)(like amp)
     - [ ] Deep

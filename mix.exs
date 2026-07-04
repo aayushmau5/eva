@@ -14,14 +14,14 @@ defmodule Eva.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger],
+      mod: {Eva.Application, []}
     ]
   end
 
-  # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:req, "~> 0.6"},
+      {:finch, "~> 0.23"},
       {:typedstruct, "~> 0.5"}
     ]
   end
