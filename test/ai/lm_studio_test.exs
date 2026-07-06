@@ -5,13 +5,10 @@ defmodule Eva.AI.LmStudioTest do
   alias Eva.Agent
 
   describe "GenServer lifecycle" do
-    test "starts and accepts change_config" do
+    test "starts with default config" do
       {:ok, pid} = LmStudio.start_link(name: nil)
 
-      assert :ok = GenServer.call(pid, {:change_config, %{model: "test"}})
-
-      state = GenServer.call(pid, :get_state)
-      assert state.config.model == "test"
+      assert Process.alive?(pid)
 
       GenServer.stop(pid)
     end
@@ -21,10 +18,17 @@ defmodule Eva.AI.LmStudioTest do
     @tag :external
     @tag timeout: 30_000
 
-    test "{:run, self()} streams events in order" do
-      {:ok, pid} = LmStudio.start_link(name: nil, messages: ["What's the weather?"])
+    test "{:run, run_opts} streams events in order" do
+      {:ok, pid} = LmStudio.start_link(name: nil)
 
-      GenServer.cast(pid, {:run, self()})
+      GenServer.cast(
+        pid,
+        {:run,
+         [
+           listener_pid: self(),
+           messages: [%Agent.Messages.UserMessage{content: "What's the weather?"}]
+         ]}
+      )
 
       assert_receive %Events.ProviderResponseStart{model: model}, 5000
       assert is_binary(model)

@@ -2,10 +2,15 @@ defmodule Eva.AI.StreamState do
   alias Eva.AI.Sse
   alias Eva.Agent.Tools.ToolCall
 
-  defstruct content_rev: [], finish_reason: nil, buffer: "", status: nil, tool_calls: %{}
+  defstruct content_rev: [],
+            finish_reason: nil,
+            buffer: "",
+            status: nil,
+            tool_calls: %{},
+            body_rev: []
 
-  def feed(%__MODULE__{status: s} = state, _data) when s != nil and s >= 400 do
-    {state, []}
+  def feed(%__MODULE__{status: s} = state, data) when s != nil and s >= 400 do
+    {%{state | body_rev: [data | state.body_rev]}, []}
   end
 
   def feed(state, data) do
@@ -87,7 +92,7 @@ defmodule Eva.AI.StreamState do
 
       # Elixir typesystem was picking this up a dynamic() so pattern matching on the type
       %ToolCall{} =
-      current = Map.get(acc, idx, %ToolCall{id: "tool-call-#{idx}", name: nil, arguments: ""})
+        current = Map.get(acc, idx, %ToolCall{id: "tool-call-#{idx}", name: nil, arguments: ""})
 
       func = tool_call["function"]
 

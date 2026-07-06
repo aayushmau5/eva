@@ -95,7 +95,7 @@ defmodule Eva.AI.StreamStateTest do
         StreamState.feed(state, "data: {\"choices\":[{\"delta\":{\"content\":\"nope\"}}]}\n")
 
       assert events == []
-      assert returned_state == state
+      assert returned_state.status == 500
     end
 
     test "handles tool call missing index (defaults to 0)" do
