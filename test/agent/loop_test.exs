@@ -18,7 +18,9 @@ defmodule Eva.Agent.LoopTest do
   describe "run/1 with text-only responses" do
     test "single turn, single text delta" do
       {:ok, harness} = MockHarness.start_link()
-      {:ok, provider} = MockProvider.start_link([[stream_start(), text_delta("hi"), response_end("hi")]])
+
+      {:ok, provider} =
+        MockProvider.start_link([[stream_start(), text_delta("hi"), response_end("hi")]])
 
       {:ok, messages} =
         Task.async(fn ->
@@ -46,12 +48,14 @@ defmodule Eva.Agent.LoopTest do
       {:ok, harness} = MockHarness.start_link()
 
       {:ok, provider} =
-        MockProvider.start_link([[
-          stream_start(),
-          text_delta("Hello "),
-          text_delta("world"),
-          response_end("Hello world")
-        ]])
+        MockProvider.start_link([
+          [
+            stream_start(),
+            text_delta("Hello "),
+            text_delta("world"),
+            response_end("Hello world")
+          ]
+        ])
 
       {:ok, messages} =
         Task.async(fn ->
@@ -72,7 +76,9 @@ defmodule Eva.Agent.LoopTest do
 
     test "ends when no queued messages exist" do
       {:ok, harness} = MockHarness.start_link()
-      {:ok, provider} = MockProvider.start_link([[stream_start(), text_delta("done"), response_end("done")]])
+
+      {:ok, provider} =
+        MockProvider.start_link([[stream_start(), text_delta("done"), response_end("done")]])
 
       {:ok, messages} =
         Task.async(fn ->
@@ -281,10 +287,12 @@ defmodule Eva.Agent.LoopTest do
       {:ok, harness} = MockHarness.start_link()
 
       {:ok, provider} =
-        MockProvider.start_link([[
-          stream_start(),
-          %AIEvents.ProviderError{message: "model overloaded"}
-        ]])
+        MockProvider.start_link([
+          [
+            stream_start(),
+            %AIEvents.ProviderError{message: "model overloaded"}
+          ]
+        ])
 
       {:ok, messages} =
         Task.async(fn ->
@@ -328,11 +336,13 @@ defmodule Eva.Agent.LoopTest do
       {:ok, harness} = MockHarness.start_link()
 
       {:ok, provider} =
-        MockProvider.start_link([[
-          stream_start(),
-          text_delta("t1"),
-          response_end("t1")
-        ]])
+        MockProvider.start_link([
+          [
+            stream_start(),
+            text_delta("t1"),
+            response_end("t1")
+          ]
+        ])
 
       {:ok, _messages} =
         Task.async(fn ->
@@ -376,7 +386,9 @@ defmodule Eva.Agent.LoopTest do
   describe "run/1 event ordering" do
     test "emits events in correct lifecycle order" do
       {:ok, harness} = MockHarness.start_link()
-      {:ok, provider} = MockProvider.start_link([[stream_start(), text_delta("x"), response_end("x")]])
+
+      {:ok, provider} =
+        MockProvider.start_link([[stream_start(), text_delta("x"), response_end("x")]])
 
       Task.async(fn ->
         Loop.run(
@@ -409,6 +421,7 @@ defmodule Eva.Agent.LoopTest do
     else
       {:ok, provider} =
         Eva.AI.LmStudio.start_link(
+          name: Eva.Test.LmStudio,
           system_prompt: "You are a helpful assistant. Answer in one short sentence.",
           model: model_name()
         )

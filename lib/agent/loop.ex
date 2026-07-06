@@ -38,7 +38,6 @@ defmodule Eva.Agent.Loop do
     * `:provider_pid` (required) — the provider process PID (e.g. `Eva.AI.LmStudio` GenServer).
     * `:harness_pid` — the owner PID to send events to and call back for
       queue draining. Defaults to `self()`.
-    * `:model` — model name forwarded to the provider (default: provider's default).
     * `:messages` — initial transcript (default: `[]`). The harness pre-populates
       this with the user prompt and any prior conversation history.
     * `:tools` — list of `%Tools.AgentTool{}` definitions (default: `[]`).
@@ -58,7 +57,6 @@ defmodule Eva.Agent.Loop do
     ctx = %{
       provider_pid: provider_pid,
       harness_pid: harness_pid,
-      model: Keyword.get(opts, :model),
       tools: Keyword.get(opts, :tools, []),
       max_turns: Keyword.get(opts, :max_turns),
       stream_timeout: Keyword.get(opts, :stream_timeout, 120_000)
