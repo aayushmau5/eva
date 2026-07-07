@@ -29,8 +29,21 @@ defmodule Eva.MixProject do
 
   defp deps do
     [
+      # TODO: fix this(probably by finch)
+      #  hpax 1.0.3 VULNERABLE!
+      #   EEF-CVE-2026-58226 (HIGH)
+      #   aka: CVE-2026-58226, GHSA-jj2p-32j7-whj2
+      #   Unauthenticated denial-of-service via unbounded HPACK integer decoding in hpax
+      #   https://osv.dev/vulnerability/EEF-CVE-2026-58226
+      # mime 2.0.7
+      # mint 1.9.0 VULNERABLE!
+      #   EEF-CVE-2026-56810 (HIGH)
+      #   aka: CVE-2026-56810, GHSA-c59h-fq4p-r36r
+      #   mint buffers an entire chunked response chunk in memory in Mint.HTTP1.decode_body/5
+      #   https://osv.dev/vulnerability/EEF-CVE-2026-56810
       {:finch, "~> 0.23"},
-      {:typedstruct, "~> 0.5"}
+      {:typedstruct, "~> 0.5"},
+      {:uuid, "~> 1.1"}
     ]
   end
 

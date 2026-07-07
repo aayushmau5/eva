@@ -3,6 +3,8 @@ defmodule Eva.Agent.Messages do
   Message types. Common between Agent & AI module.
   """
 
+  alias Eva.Agent.{Tools, Utils}
+
   defmodule UserMessage do
     @moduledoc """
     A message authored by the user.
@@ -45,5 +47,17 @@ defmodule Eva.Agent.Messages do
       field :details, map(), default: nil
       field :error, String.t(), default: nil
     end
+  end
+
+  defimpl JSON.Encoder, for: [UserMessage, AssistantMessage, ToolResultMessage] do
+    def encode(struct, opts) do
+      struct |> Map.from_struct() |> JSON.Encoder.encode(opts)
+    end
+  end
+
+  def from_json_map(map) when is_map(map) do
+    tc = (map["tool_calls"] || []) |> Enum.map(&Tools.ToolCall.from_json_map/1)
+    fields = Utils.to_atom_keys(map) |> Map.put(:tool_calls, tc)
+    struct!(AssistantMessage, fields)
   end
 end
