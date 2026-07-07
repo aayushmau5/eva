@@ -60,4 +60,9 @@ defmodule Eva.Agent.Messages do
     fields = Utils.to_atom_keys(map) |> Map.put(:tool_calls, tc)
     struct!(AssistantMessage, fields)
   end
+
+  @type t() ::
+          UserMessage.t()
+          | AssistantMessage.t()
+          | ToolResultMessage.t()
 end

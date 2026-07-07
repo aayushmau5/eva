@@ -1,10 +1,43 @@
 defmodule Eva.Agent.Session.Entries do
   @moduledoc """
   Session entry structs.
+
+
+  TODO: Explore.
+  ```
+  If you just need the common fields (id, parent_id, timestamp, type) without caring about the subtype, a protocol is the cleanest:
+  defprotocol Entry do
+    @spec id(t) :: String.t()
+    def id(entry)
+
+    @spec parent_id(t) :: String.t() | nil
+    def parent_id(entry)
+
+    @spec timestamp(t) :: float()
+    def timestamp(entry)
+
+    @spec type(t) :: String.t()
+    def type(entry)
+  end
+
+  # Then implement for each struct — they all have the same fields,
+  # but you could use `@derive` + a shared module helper.
+  ```
   """
 
   alias Eva.Agent.Messages
   alias Eva.Agent.Utils
+
+  @type t() ::
+          Message.t()
+          | ModelChange.t()
+          | ThinkingLevelChange.t()
+          | Compaction.t()
+          | BranchSummary.t()
+          | Label.t()
+          | Leaf.t()
+          | SessionInfo.t()
+          | Custom.t()
 
   defmodule Message do
     use TypedStruct
@@ -13,8 +46,8 @@ defmodule Eva.Agent.Session.Entries do
 
     typedstruct do
       field :id, String.t(), enforce: true
-      field :parent_id, String.t() | nil
-      field :timestamp, float()
+      field :parent_id, String.t()
+      field :timestamp, float(), enforce: true
       field :type, String.t(), default: "message"
       field :message, Messages.AssistantMessage.t()
     end
@@ -36,8 +69,8 @@ defmodule Eva.Agent.Session.Entries do
 
     typedstruct do
       field :id, String.t(), enforce: true
-      field :parent_id, String.t() | nil
-      field :timestamp, float()
+      field :parent_id, String.t()
+      field :timestamp, float(), enforce: true
       field :type, String.t(), default: "model_change"
       field :model, String.t()
     end
