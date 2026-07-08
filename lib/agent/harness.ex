@@ -203,59 +203,37 @@ defmodule Eva.Agent.Harness do
   end
 
   # When a run is cancelled mid-tool-call, the transcript is left dangling —
-  # it has an AssistantMessage with tool calls but no matching ToolResultMessage for them.
+  # it has AssistantMessages with tool calls but no matching ToolResultMessages for them.
   # Providers reject that as malformed.
-  # This function walks backward from the tail, finds the last assistant message with open tool calls,
-  # and synthesizes failure ToolResultMessage stubs ("Tool call interrupted by user") for any missing results.
+  # This walks all messages, finds every assistant tool call that lacks a result,
+  # and synthesizes failure ToolResultMessage stubs ("Tool call interrupted by user").
   # This lets the next prompt or continue start with a valid transcript.
   defp repair_tool_calls(%{messages: messages} = state) do
-    case latest_open_tool_call_assistant_index(messages) do
-      nil ->
-        state
+    returned_ids =
+      messages
+      |> Enum.filter(&match?(%Messages.ToolResultMessage{}, &1))
+      |> MapSet.new(& &1.tool_call_id)
 
-      index ->
-        assistant = Enum.at(messages, index)
+    repaired =
+      messages
+      |> Enum.flat_map(fn
+        %Messages.AssistantMessage{tool_calls: tool_calls} when not is_nil(tool_calls) ->
+          tool_calls
+          |> Enum.reject(&MapSet.member?(returned_ids, &1.id))
+          |> Enum.map(fn tc ->
+            %Messages.ToolResultMessage{
+              tool_call_id: tc.id,
+              name: tc.name,
+              content: "Tool call interrupted by user",
+              ok: false,
+              error: "Tool call interrupted by user"
+            }
+          end)
 
-        case assistant do
-          %Messages.AssistantMessage{tool_calls: tool_calls} ->
-            returned_ids =
-              messages
-              |> Enum.drop(index + 1)
-              |> Enum.filter(&match?(%Messages.ToolResultMessage{}, &1))
-              |> MapSet.new(& &1.tool_call_id)
+        _ ->
+          []
+      end)
 
-            repaired =
-              tool_calls
-              |> Enum.reject(&MapSet.member?(returned_ids, &1.id))
-              |> Enum.map(fn tc ->
-                %Messages.ToolResultMessage{
-                  tool_call_id: tc.id,
-                  name: tc.name,
-                  content: "Tool call interrupted by user",
-                  ok: false,
-                  error: "Tool call interrupted by user"
-                }
-              end)
-
-            %{state | messages: messages ++ repaired}
-
-          _ ->
-            state
-        end
-    end
-  end
-
-  # Walk backward from the tail to find the last AssistantMessage with
-  # unresolved tool calls. If a UserMessage appears first, the run completed
-  # cleanly before being interrupted — no repair needed.
-  defp latest_open_tool_call_assistant_index(messages) do
-    messages
-    |> Enum.with_index()
-    |> Enum.reverse()
-    |> Enum.reduce_while(nil, fn
-      {%Messages.UserMessage{}, _i}, _acc -> {:halt, nil}
-      {%Messages.AssistantMessage{tool_calls: [_ | _]}, i}, _acc -> {:halt, i}
-      _, _acc -> {:cont, nil}
-    end)
+    %{state | messages: messages ++ repaired}
   end
 end

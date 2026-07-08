@@ -94,9 +94,50 @@ defmodule Eva.Agent.Session.State do
     }
   end
 
-  defp apply_compaction(message_rows, _compaction), do: message_rows
+  # Replaces the first matching entry in message_rows whose id is in
+  # compaction.replaces_entry_ids with a summary UserMessage. All subsequent
+  # replaced entries are dropped. If no replaced entry is found, the summary
+  # is appended at the end.
+  defp apply_compaction(message_rows, compaction) do
+    replaced_ids = MapSet.new(compaction.replaces_entry_ids)
+    summary_msg = %Messages.UserMessage{content: format_compaction_summary(compaction.summary)}
 
-  defp format_branch_summary(branch_summary), do: branch_summary.summary
+    {retained, inserted?} =
+      Enum.reduce(message_rows, {[], false}, fn {entry_id, _msg} = row, {acc, inserted} ->
+        if MapSet.member?(replaced_ids, entry_id) do
+          if inserted do
+            {acc, inserted}
+          else
+            {[{compaction.id, summary_msg} | acc], true}
+          end
+        else
+          {[row | acc], inserted}
+        end
+      end)
+
+    retained =
+      if inserted? do
+        retained
+      else
+        [{compaction.id, summary_msg} | retained]
+      end
+
+    Enum.reverse(retained)
+  end
+
+  defp format_compaction_summary(summary) do
+    ~s"""
+    Previous conversation summary:
+    #{summary}
+    """
+  end
+
+  defp format_branch_summary(branch_summary) do
+    ~s"""
+    The following is a summary of a branch that this conversation came back from:
+    <summary>#{branch_summary.summary}</summary>
+    """
+  end
 
   defp get_latest_branch_summary_index(entries) do
     entries

@@ -1,5 +1,6 @@
 defmodule Eva.Coding.Tools do
   alias Eva.Agent.Tools
+  alias Eva.Coding.Diff
 
   @default_max_output_kb 50
   @default_max_output_bytes @default_max_output_kb * 1024
@@ -17,7 +18,7 @@ defmodule Eva.Coding.Tools do
       """,
       # prompt_snippet & prompt_guidelines are used while building the system prompt.
       prompt_snippet: "Read file contents",
-      prompt_guidelines: "Use read to examine files instead of cat or sed.",
+      prompt_guidelines: ["Use read to examine files instead of cat or sed."],
       input_schema: %{
         type: "object",
         properties: %{
@@ -149,6 +150,114 @@ defmodule Eva.Coding.Tools do
     }
   end
 
+  def write_tool(cwd) do
+    %Tools.AgentTool{
+      name: "write",
+      description: """
+      Write content to a file. Creates the file if it doesn't exist, overwrites if it does.
+      Automatically creates parent directories.
+      """,
+      prompt_snippet: "Create or overwrite files",
+      prompt_guidelines: ["Use write only for new files or complete rewrites."],
+      input_schema: %{
+        type: "object",
+        properties: %{
+          path: %{type: "string", description: "Path to the file to write"},
+          content: %{type: "string", description: "Content to write to the file"}
+        },
+        required: ["path", "content"]
+      },
+      executor: fn arguments ->
+        path = path_arg(arguments, "path", cwd)
+        content = string_arg(arguments, "content")
+
+        path |> Path.dirname() |> File.mkdir_p!()
+        File.write!(path, content)
+
+        %Tools.AgentToolResult{
+          tool_call_id: "",
+          name: "write",
+          ok: true,
+          content: "Successfully wrote to #{path}.",
+          data: %{path: path, characters: String.length(content)}
+        }
+      end
+    }
+  end
+
+  def edit_tool(cwd) do
+    %Tools.AgentTool{
+      name: "edit",
+      description: """
+      Edit a single file using exact text replacement. Every edits[].oldText must match
+      a unique, non-overlapping region of the original file. If two changes affect the
+      same block or nearby lines, merge them into one edit instead of emitting overlapping
+      edits. Do not include large unchanged regions just to connect distant changes.
+      """,
+      prompt_snippet:
+        "Make precise file edits with exact text replacement, including multiple disjoint edits in one call",
+      prompt_guidelines: [
+        "Use edit for precise changes (edits[].oldText must match exactly)",
+        "When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls",
+        "Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.",
+        "Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions."
+      ],
+      input_schema: %{
+        type: "object",
+        properties: %{
+          path: %{type: "string", description: "Path to the file to edit"},
+          edits: %{
+            type: "array",
+            description: "One or more targeted replacements.",
+            items: %{
+              type: "object",
+              properties: %{
+                oldText: %{type: "string"},
+                newText: %{type: "string"}
+              },
+              required: ["oldText", "newText"],
+              additionalProperties: false
+            }
+          }
+        },
+        required: ["path", "edits"],
+        additionalProperties: false
+      },
+      executor: fn arguments ->
+        arguments = prepare_edit_args(arguments)
+        path = path_arg(arguments, "path", cwd)
+        edits = edits_arg(arguments)
+
+        if not File.exists?(path), do: raise("Could not edit file: #{path}. File not found.")
+        if File.dir?(path), do: raise("Could not edit file: #{path}. Path is a directory")
+
+        {bom, content} = File.read!(path) |> strip_bom()
+        line_ending = detect_line_ending(content)
+        normalized = normalize_to_lf(content)
+        {base_content, new_content} = apply_edits(normalized, edits, path)
+        final_content = bom <> restore_line_endings(new_content, line_ending)
+        File.write!(path, final_content)
+
+        {diff, first_changed_line} = Diff.diff_string(base_content, new_content)
+        patch = Diff.unified_patch(Path.relative_to(path, cwd), base_content, new_content)
+
+        %Tools.AgentToolResult{
+          tool_call_id: "",
+          name: "edit",
+          ok: true,
+          content: "Successfully replaced #{length(edits)} block(s) in #{path}.",
+          data: %{
+            path: path,
+            edits: length(edits),
+            diff: diff,
+            patch: patch,
+            first_changed_line: first_changed_line
+          }
+        }
+      end
+    }
+  end
+
   defp string_arg(arguments, name) do
     case Map.get(arguments, name) do
       nil -> raise "Missing argument #{name}"
@@ -159,6 +268,70 @@ defmodule Eva.Coding.Tools do
 
   defp path_arg(arguments, name, cwd) do
     string_arg(arguments, name) |> Path.expand() |> Path.absname(cwd)
+  end
+
+  defp edits_arg(arguments) do
+    value = Map.get(arguments, "edits")
+
+    if not is_list(value) or value == [] do
+      raise "Edit tool input is invalid. edits must contain at least one replacement."
+    end
+
+    value
+    |> Enum.with_index()
+    |> Enum.reduce([], fn {edit, i}, edits ->
+      if not is_map(edit) do
+        raise "edits[#{i}] must be an object"
+      end
+
+      old_text = Map.get(edit, "oldText")
+      new_text = Map.get(edit, "newText")
+
+      if not is_binary(old_text) or not is_binary(new_text) do
+        raise "edits[#{i}].oldText and edits[#{i}].newText must be strings"
+      end
+
+      [%{old_text: old_text, new_text: new_text} | edits]
+    end)
+    |> Enum.reverse()
+  end
+
+  defp detect_line_ending(content) do
+    crlf_index = :binary.match(content, "\r\n")
+    lf_index = :binary.match(content, "\n")
+
+    cond do
+      crlf_index == :nomatch or lf_index == :nomatch -> "\n"
+      elem(crlf_index, 0) < elem(lf_index, 0) -> "\r\n"
+      true -> "\n"
+    end
+  end
+
+  defp normalize_to_lf(text) do
+    text |> String.replace("\r\n", "\n") |> String.replace("\r", "\n")
+  end
+
+  defp restore_line_endings(text, ending) do
+    if ending == "\r\n" do
+      String.replace(text, "\n", "\r\n")
+    else
+      text
+    end
+  end
+
+  defp prepare_edit_args(arguments) do
+    edits_values = Map.get(arguments, "edits")
+
+    cond do
+      is_binary(edits_values) ->
+        case JSON.decode(edits_values) do
+          {:ok, parsed} -> Map.put(arguments, "edits", parsed)
+          {:error, _} -> arguments
+        end
+
+      true ->
+        arguments
+    end
   end
 
   defp optional_int_arg(arguments, name) do
@@ -265,5 +438,82 @@ defmodule Eva.Coding.Tools do
       max_lines: @default_max_output_lines,
       max_bytes: @default_max_output_bytes
     }
+  end
+
+  # Some editors (notably on Windows) prepend \ufeff to UTF-8 files.
+  # It's an invisible character at position 0.
+  # If you don't strip it, exact oldText matching fails — the user's oldText won't include the BOM, so it won't match the file content that starts with it.
+  # This strips it before matching edits and restores it after, so BOM'd files behave identically to non-BOM'd ones for matching purposes.
+  defp strip_bom(content) do
+    utf8_bom = "\uFEFF"
+
+    if String.starts_with?(content, utf8_bom) do
+      {utf8_bom, String.replace_prefix(content, utf8_bom, "")}
+    else
+      {"", content}
+    end
+  end
+
+  defp apply_edits(content, edits, path) do
+    edits =
+      Enum.map(edits, fn edit ->
+        %{old_text: normalize_to_lf(edit.old_text), new_text: normalize_to_lf(edit.new_text)}
+      end)
+
+    matches =
+      edits
+      |> Enum.with_index()
+      |> Enum.reduce([], fn {edit, i}, matches ->
+        old_text = edit.old_text
+        occurences = count_occurrences(content, old_text)
+
+        cond do
+          occurences == 0 ->
+            raise "Could not find edits[#{i}] in #{path}. The oldText must match exactly including all whitespace and newlines."
+
+          occurences > 1 ->
+            raise "Found #{occurences} occurrences of edits[#{i}] in #{path}. Each oldText must be unique. Please provide more context to make it unique."
+
+          true ->
+            {start, len} = :binary.match(content, old_text)
+            [{start, start + len, edit.new_text} | matches]
+        end
+      end)
+      |> Enum.reverse()
+
+    validate_non_overlapping(matches)
+
+    new_content =
+      matches
+      |> Enum.sort_by(fn {start, _, _} -> start end, :desc)
+      |> Enum.reduce(content, fn {start, end_pos, new_text}, acc ->
+        String.slice(acc, 0, start) <> new_text <> String.slice(acc, end_pos..-1//1)
+      end)
+
+    if content == new_content do
+      raise "No changes made to #{path}. The replacements produced identical content."
+    end
+
+    {content, new_content}
+  end
+
+  defp count_occurrences(content, text, start \\ 0, count \\ 0) do
+    case :binary.match(content, text, [{:scope, {start, byte_size(content) - start}}]) do
+      :nomatch -> count
+      {index, len} -> count_occurrences(content, text, index + len, count + 1)
+    end
+  end
+
+  defp validate_non_overlapping(spans) do
+    sorted = Enum.sort_by(spans, fn {start, _, _} -> start end)
+
+    {_, :ok} =
+      Enum.reduce(sorted, {-1, :ok}, fn {start, end_pos, _}, {previous_end, :ok} ->
+        if start < previous_end do
+          raise "Edits must not overlap"
+        end
+
+        {end_pos, :ok}
+      end)
   end
 end

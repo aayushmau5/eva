@@ -121,6 +121,24 @@ defmodule Eva.Coding.ToolsTest do
         tool.executor.(%{"path" => path, "offset" => 10})
       end
     end
+
+    test "raises on non-integer offset", %{tmp: tmp} do
+      path = write_file(tmp, "x.txt", "hi\n")
+      tool = CodingTools.read_tool(tmp)
+
+      assert_raise RuntimeError, ~r/is not an integer/, fn ->
+        tool.executor.(%{"path" => path, "offset" => "abc"})
+      end
+    end
+
+    test "raises on non-integer limit", %{tmp: tmp} do
+      path = write_file(tmp, "x.txt", "hi\n")
+      tool = CodingTools.read_tool(tmp)
+
+      assert_raise RuntimeError, ~r/is not an integer/, fn ->
+        tool.executor.(%{"path" => path, "limit" => "abc"})
+      end
+    end
   end
 
   describe "truncation" do
@@ -161,12 +179,115 @@ defmodule Eva.Coding.ToolsTest do
       assert result.data.truncation.output_bytes == byte_size("hello\nworld\n")
     end
 
+    test "truncates by bytes when collective lines hit byte limit before line limit", %{tmp: tmp} do
+      # 80 lines of ~700 bytes each = ~56KB, exceeds 50KB byte limit but well under 2000 line limit
+      line = String.duplicate("x", 690)
+      content = Enum.map_join(1..80, "\n", fn _ -> line end)
+      path = write_file(tmp, "byte_limit.txt", content)
+
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
+
+      assert result.ok
+      assert result.data.truncation.truncated
+      assert result.data.truncation.truncated_by == "bytes"
+      assert result.content =~ "50.0KB"
+    end
+
+    test "reads last line with offset and limit that reaches EOF", %{tmp: tmp} do
+      path = write_file(tmp, "lines.txt", "a\nb\nc")
+
+      result =
+        CodingTools.read_tool(tmp).executor.(%{"path" => path, "offset" => 3, "limit" => 1})
+
+      assert result.ok
+      assert result.content == "c"
+    end
+
     test "total_lines in truncation strips trailing empty line", %{tmp: tmp} do
       path = write_file(tmp, "x.txt", "a\nb\n")
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
 
       # split_lines_for_counting drops trailing empty from EOL-terminated files
       assert result.data.truncation.total_lines == 2
+    end
+  end
+
+  describe "write" do
+    test "creates file with content", %{tmp: tmp} do
+      path = Path.join(tmp, "new.txt")
+      content = "hello write tool\n"
+      tool = CodingTools.write_tool(tmp)
+
+      result = tool.executor.(%{"path" => path, "content" => content})
+
+      assert result.ok
+      assert result.content =~ "Successfully wrote to #{path}"
+      assert result.data.path == path
+      assert result.data.characters == String.length(content)
+      assert File.exists?(path)
+      assert File.read!(path) == content
+    end
+
+    test "overwrites existing file", %{tmp: tmp} do
+      path = write_file(tmp, "existing.txt", "old content")
+      new_content = "new content\n"
+      tool = CodingTools.write_tool(tmp)
+
+      result = tool.executor.(%{"path" => path, "content" => new_content})
+
+      assert result.ok
+      assert File.read!(path) == new_content
+    end
+
+    test "creates parent directories", %{tmp: tmp} do
+      path = Path.join([tmp, "nested", "deep", "file.txt"])
+      content = "deep content"
+      tool = CodingTools.write_tool(tmp)
+
+      result = tool.executor.(%{"path" => path, "content" => content})
+
+      assert result.ok
+      assert File.exists?(path)
+      assert File.read!(path) == content
+    end
+
+    test "writes empty content", %{tmp: tmp} do
+      path = Path.join(tmp, "empty.txt")
+      tool = CodingTools.write_tool(tmp)
+
+      result = tool.executor.(%{"path" => path, "content" => ""})
+
+      assert result.ok
+      assert result.data.characters == 0
+      assert File.read!(path) == ""
+    end
+
+    test "raises when path is missing", %{tmp: tmp} do
+      tool = CodingTools.write_tool(tmp)
+
+      assert_raise RuntimeError, ~r/Missing argument path/, fn ->
+        tool.executor.(%{"content" => "x"})
+      end
+    end
+
+    test "raises when content is missing", %{tmp: tmp} do
+      tool = CodingTools.write_tool(tmp)
+
+      assert_raise RuntimeError, ~r/Missing argument content/, fn ->
+        tool.executor.(%{"path" => Path.join(tmp, "f.txt")})
+      end
+    end
+
+    test "resolves relative paths against process cwd", %{tmp: tmp} do
+      tool = CodingTools.write_tool(tmp)
+
+      result = tool.executor.(%{"path" => "relative.txt", "content" => "relative content"})
+
+      assert result.ok
+      assert result.data.path =~ ~r/relative\.txt$/
+      assert File.exists?(result.data.path)
+      assert File.read!(result.data.path) == "relative content"
+      File.rm!(result.data.path)
     end
   end
 
@@ -189,6 +310,303 @@ defmodule Eva.Coding.ToolsTest do
       assert result.ok
       assert result.content == "Read image file [image/jpeg]"
       assert result.data.mime_type == "image/jpeg"
+    end
+
+    test "returns image metadata for gif", %{tmp: tmp} do
+      path = write_file(tmp, "anim.gif", "fake-gif-data")
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
+
+      assert result.ok
+      assert result.content == "Read image file [image/gif]"
+      assert result.data.mime_type == "image/gif"
+      assert result.data.image_base64 != nil
+    end
+
+    test "returns image metadata for webp", %{tmp: tmp} do
+      path = write_file(tmp, "img.webp", "fake-webp-data")
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
+
+      assert result.ok
+      assert result.content == "Read image file [image/webp]"
+      assert result.data.mime_type == "image/webp"
+      assert result.data.image_base64 != nil
+    end
+  end
+
+  describe "edit" do
+    test "populates diff, patch, and first_changed_line", %{tmp: tmp} do
+      path = write_file(tmp, "x.txt", "alpha\nbeta\ngamma\n")
+      tool = CodingTools.edit_tool(tmp)
+
+      result =
+        tool.executor.(%{
+          "path" => path,
+          "edits" => [%{"oldText" => "beta", "newText" => "BETA"}]
+        })
+
+      assert result.ok
+      assert result.data.first_changed_line == 2
+      assert result.data.diff =~ "- beta"
+      assert result.data.diff =~ "+ BETA"
+      assert result.data.patch =~ "--- x.txt\n"
+      assert result.data.patch =~ "@@ -1,3 +1,3 @@"
+      assert result.data.patch =~ "-beta"
+      assert result.data.patch =~ "+BETA"
+      assert File.read!(path) == "alpha\nBETA\ngamma\n"
+    end
+
+    test "applies multiple disjoint edits in one call", %{tmp: tmp} do
+      path = write_file(tmp, "multi.txt", "alpha\nbeta\ngamma\ndelta\nepsilon\n")
+      tool = CodingTools.edit_tool(tmp)
+
+      result =
+        tool.executor.(%{
+          "path" => path,
+          "edits" => [
+            %{"oldText" => "beta", "newText" => "BETA"},
+            %{"oldText" => "delta", "newText" => "DELTA"}
+          ]
+        })
+
+      assert result.ok
+      assert result.data.edits == 2
+      assert result.data.first_changed_line == 2
+      assert result.data.diff =~ "- beta"
+      assert result.data.diff =~ "+ BETA"
+      assert result.data.diff =~ "- delta"
+      assert result.data.diff =~ "+ DELTA"
+      assert File.read!(path) == "alpha\nBETA\ngamma\nDELTA\nepsilon\n"
+    end
+
+    test "edit at beginning of file", %{tmp: tmp} do
+      path = write_file(tmp, "start.txt", "alpha\nbeta\ngamma\n")
+      tool = CodingTools.edit_tool(tmp)
+
+      result =
+        tool.executor.(%{
+          "path" => path,
+          "edits" => [%{"oldText" => "alpha", "newText" => "ALPHA"}]
+        })
+
+      assert result.ok
+      assert result.data.first_changed_line == 1
+      assert result.data.diff =~ "- alpha"
+      assert result.data.diff =~ "+ ALPHA"
+      assert File.read!(path) == "ALPHA\nbeta\ngamma\n"
+    end
+
+    test "edit at end of file", %{tmp: tmp} do
+      path = write_file(tmp, "end.txt", "alpha\nbeta\ngamma\n")
+      tool = CodingTools.edit_tool(tmp)
+
+      result =
+        tool.executor.(%{
+          "path" => path,
+          "edits" => [%{"oldText" => "gamma", "newText" => "GAMMA"}]
+        })
+
+      assert result.ok
+      assert result.data.first_changed_line == 3
+      assert result.data.diff =~ "- gamma"
+      assert result.data.diff =~ "+ GAMMA"
+      assert File.read!(path) == "alpha\nbeta\nGAMMA\n"
+    end
+
+    test "deletes a line when newText is empty", %{tmp: tmp} do
+      path = write_file(tmp, "del.txt", "alpha\nbeta\ngamma\n")
+      tool = CodingTools.edit_tool(tmp)
+
+      result =
+        tool.executor.(%{
+          "path" => path,
+          "edits" => [%{"oldText" => "beta\n", "newText" => ""}]
+        })
+
+      assert result.ok
+      assert result.data.first_changed_line == 2
+      assert result.data.diff =~ "- beta"
+      assert File.read!(path) == "alpha\ngamma\n"
+    end
+
+    test "inserts new text between lines", %{tmp: tmp} do
+      path = write_file(tmp, "ins.txt", "alpha\ngamma\n")
+      tool = CodingTools.edit_tool(tmp)
+
+      result =
+        tool.executor.(%{
+          "path" => path,
+          "edits" => [%{"oldText" => "alpha\n", "newText" => "alpha\nbeta\n"}]
+        })
+
+      assert result.ok
+      assert result.data.diff =~ "+ beta"
+      assert File.read!(path) == "alpha\nbeta\ngamma\n"
+    end
+
+    test "handles edits passed as JSON string", %{tmp: tmp} do
+      path = write_file(tmp, "json.txt", "alpha\nbeta\ngamma\n")
+      tool = CodingTools.edit_tool(tmp)
+      edits_json = JSON.encode!([%{"oldText" => "beta", "newText" => "BETA"}])
+
+      result =
+        tool.executor.(%{
+          "path" => path,
+          "edits" => edits_json
+        })
+
+      assert result.ok
+      assert File.read!(path) == "alpha\nBETA\ngamma\n"
+    end
+
+    test "preserves CRLF line endings", %{tmp: tmp} do
+      content = "line1\r\nline2\r\nline3\r\n"
+      path = write_file(tmp, "crlf.txt", content)
+      tool = CodingTools.edit_tool(tmp)
+
+      result =
+        tool.executor.(%{
+          "path" => path,
+          "edits" => [%{"oldText" => "line2", "newText" => "LINE2"}]
+        })
+
+      assert result.ok
+      assert File.read!(path) == "line1\r\nLINE2\r\nline3\r\n"
+      assert result.data.diff =~ "- line2"
+      assert result.data.diff =~ "+ LINE2"
+    end
+
+    test "handles UTF-8 BOM", %{tmp: tmp} do
+      content = "\uFEFFalpha\nbeta\ngamma\n"
+      path = write_file(tmp, "bom.txt", content)
+      tool = CodingTools.edit_tool(tmp)
+
+      result =
+        tool.executor.(%{
+          "path" => path,
+          "edits" => [%{"oldText" => "beta", "newText" => "BETA"}]
+        })
+
+      assert result.ok
+      assert File.read!(path) == "\uFEFFalpha\nBETA\ngamma\n"
+      assert result.data.diff =~ "- beta"
+      assert result.data.diff =~ "+ BETA"
+    end
+
+    test "raises when oldText not found", %{tmp: tmp} do
+      path = write_file(tmp, "x.txt", "hello\nworld\n")
+      tool = CodingTools.edit_tool(tmp)
+
+      assert_raise RuntimeError, ~r/Could not find edits\[0\]/, fn ->
+        tool.executor.(%{
+          "path" => path,
+          "edits" => [%{"oldText" => "not-here", "newText" => "x"}]
+        })
+      end
+    end
+
+    test "raises when oldText matches multiple times", %{tmp: tmp} do
+      path = write_file(tmp, "dup.txt", "beta\nbeta\nbeta\n")
+      tool = CodingTools.edit_tool(tmp)
+
+      assert_raise RuntimeError, ~r/Found 3 occurrences/, fn ->
+        tool.executor.(%{
+          "path" => path,
+          "edits" => [%{"oldText" => "beta", "newText" => "BETA"}]
+        })
+      end
+    end
+
+    test "raises on overlapping edits", %{tmp: tmp} do
+      path = write_file(tmp, "overlap.txt", "hello world")
+      tool = CodingTools.edit_tool(tmp)
+
+      assert_raise RuntimeError, ~r/must not overlap/, fn ->
+        tool.executor.(%{
+          "path" => path,
+          "edits" => [
+            %{"oldText" => "hello w", "newText" => "x"},
+            %{"oldText" => "hello", "newText" => "y"}
+          ]
+        })
+      end
+    end
+
+    test "raises on identical replacement", %{tmp: tmp} do
+      path = write_file(tmp, "same.txt", "hello\n")
+      tool = CodingTools.edit_tool(tmp)
+
+      assert_raise RuntimeError, ~r/No changes made/, fn ->
+        tool.executor.(%{
+          "path" => path,
+          "edits" => [%{"oldText" => "hello", "newText" => "hello"}]
+        })
+      end
+    end
+
+    test "raises when file not found", %{tmp: tmp} do
+      tool = CodingTools.edit_tool(tmp)
+
+      assert_raise RuntimeError, ~r/File not found/, fn ->
+        tool.executor.(%{
+          "path" => Path.join(tmp, "nope.txt"),
+          "edits" => [%{"oldText" => "x", "newText" => "y"}]
+        })
+      end
+    end
+
+    test "raises on directory path", %{tmp: tmp} do
+      tool = CodingTools.edit_tool(tmp)
+
+      assert_raise RuntimeError, ~r/Path is a directory/, fn ->
+        tool.executor.(%{
+          "path" => tmp,
+          "edits" => [%{"oldText" => "x", "newText" => "y"}]
+        })
+      end
+    end
+
+    test "raises on empty edits array", %{tmp: tmp} do
+      path = write_file(tmp, "x.txt", "hello\n")
+      tool = CodingTools.edit_tool(tmp)
+
+      assert_raise RuntimeError, ~r/must contain at least one replacement/, fn ->
+        tool.executor.(%{"path" => path, "edits" => []})
+      end
+    end
+
+    test "raises on missing path", %{tmp: tmp} do
+      tool = CodingTools.edit_tool(tmp)
+
+      assert_raise RuntimeError, ~r/Missing argument path/, fn ->
+        tool.executor.(%{"edits" => [%{"oldText" => "x", "newText" => "y"}]})
+      end
+    end
+
+    test "raises on missing edits", %{tmp: tmp} do
+      path = write_file(tmp, "x.txt", "hello\n")
+      tool = CodingTools.edit_tool(tmp)
+
+      assert_raise RuntimeError, ~r/must contain at least one replacement/, fn ->
+        tool.executor.(%{"path" => path})
+      end
+    end
+
+    test "raises when edits entry is not a map", %{tmp: tmp} do
+      path = write_file(tmp, "x.txt", "hello\n")
+      tool = CodingTools.edit_tool(tmp)
+
+      assert_raise RuntimeError, ~r/must be an object/, fn ->
+        tool.executor.(%{"path" => path, "edits" => ["not a map"]})
+      end
+    end
+
+    test "raises when oldText or newText missing from edit entry", %{tmp: tmp} do
+      path = write_file(tmp, "x.txt", "hello\n")
+      tool = CodingTools.edit_tool(tmp)
+
+      assert_raise RuntimeError, ~r/must be strings/, fn ->
+        tool.executor.(%{"path" => path, "edits" => [%{"oldText" => "x"}]})
+      end
     end
   end
 end
