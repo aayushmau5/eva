@@ -23,6 +23,7 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
     - [ ] Tailscale?
       - [ ] Most of the work is already done(Security, Discovery & Connection)
       - [ ] Connections & Creds management
+    - [ ] Iroh?
   - [ ] At what point do we handle external node messages?
     - [ ] Split between:
       - [ ] Providers
@@ -31,19 +32,23 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
   - [ ] Handle envs & config
   - [ ] Switch providers
 - [ ] Agent Harness
-  - [ ] The agent loop
+  - [x] The agent loop
   - [ ] Handling distributed node messages
   - [ ] Context
-    - [ ] Sessions
+    - [x] Sessions
     - [ ] Memory
     - [ ] Compaction
-  - [ ] Prompts
-    - [ ] Follow-up
-    - [ ] Queue
+  - [x] Prompts
+    - [x] Follow-up
+    - [x] Queue
+    - [ ] Assembling prompts
   - [ ] Tools
     - [ ] Tool calls
       - [ ] Elixir native?
-      - [ ] read/write/edit/bash tools
+      - [x] read
+      - [ ] write
+      - [ ] edit
+      - [ ] bash
       - [ ] Q/A
   - [ ] Subagents
   - [ ] Modes or Characters(?)(like amp)
