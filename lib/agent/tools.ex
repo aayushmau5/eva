@@ -47,7 +47,7 @@ defmodule Eva.Agent.Tools do
       * `name` — unique tool name exposed to the model.
       * `description` — description the model uses to decide when to call this tool.
       * `input_schema` — JSON Schema for the tool's arguments.
-      * `executor` — function `(arguments, signal -> AgentToolResult)`. Called to
+      * `executor` — function `(arguments -> AgentToolResult)`. Called to
         execute the tool.
       * `prompt_snippet` — optional text injected into the system prompt to guide
         the model on when to use this tool.
@@ -70,13 +70,13 @@ defmodule Eva.Agent.Tools do
   @type tool :: AgentTool.t()
 
   @doc """
-  Executes a tool with provider-neutral arguments and an optional cancellation signal.
+  Executes a tool with provider-neutral arguments.
 
   Delegates to the tool's `executor` function.
   """
-  @spec execute(AgentTool.t(), map(), boolean()) :: AgentToolResult.t()
-  def execute(%AgentTool{executor: executor}, arguments, signal \\ false) do
-    executor.(arguments, signal)
+  @spec execute(AgentTool.t(), map()) :: AgentToolResult.t()
+  def execute(%AgentTool{executor: executor}, arguments) do
+    executor.(arguments)
   end
 
   defimpl JSON.Encoder, for: ToolCall do

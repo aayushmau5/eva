@@ -43,7 +43,8 @@ defmodule Eva.MixProject do
       #   https://osv.dev/vulnerability/EEF-CVE-2026-56810
       {:finch, "~> 0.23"},
       {:typedstruct, "~> 0.5"},
-      {:uuid, "~> 1.1"}
+      {:uuid, "~> 1.1"},
+      {:mime, "~> 2.0"}
     ]
   end
 
