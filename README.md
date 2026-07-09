@@ -46,8 +46,8 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
     - [ ] Tool calls
       - [ ] Elixir native?
       - [x] read
-      - [ ] write
-      - [ ] edit
+      - [x] write
+      - [x] edit
       - [ ] bash
       - [ ] Q/A
   - [ ] Subagents
@@ -57,6 +57,8 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
     - [ ] Oracle
   - [ ] Extensions
     - [ ] Perhpas "sharing" as an extension
+  - [ ] Ability to modify itself
+    - [ ] With Hot reload?
   - [ ] Sharing(login?)
     - [ ] Atproto
       - [ ] PDS as sync layer(inspired by tiles.run)?
@@ -65,6 +67,7 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
 - [ ] TUI (`ex_ratatui`) + BYO-FE
   - [ ] Slash commands (`/usage`, `/providers`, `/login`, `/logout`, ...)
   - [ ] Pretty lil animations
+- Explore https://github.com/elixir-vibe/vibe for further stuff
 
 ## What Sets It Apart
 
