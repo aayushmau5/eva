@@ -1,6 +1,7 @@
 defmodule Eva.Coding.Tools do
   alias Eva.Agent.Tools
   alias Eva.Coding.Diff
+  alias Eva.Coding.ShellExec
 
   @default_max_output_kb 50
   @default_max_output_bytes @default_max_output_kb * 1024
@@ -258,6 +259,112 @@ defmodule Eva.Coding.Tools do
     }
   end
 
+  def bash_tool(cwd) do
+    %Tools.AgentTool{
+      name: "bash",
+      description: """
+      Execute a bash command in the current working directory. Returns stdout and stderr.
+      Output is truncated to last #{@default_max_output_lines} lines or #{@default_max_output_kb}KB (whichever is hit first).
+      If truncated, full output is saved to a temp file.
+      Optionally provide a timeout in seconds.
+      """,
+      prompt_snippet: "Execute bash commands (ls, grep, find, etc.)",
+      prompt_guidelines: [],
+      input_schema: %{
+        type: "object",
+        properties: %{
+          command: %{type: "string", description: "Bash command to execute"},
+          timeout: %{
+            type: "number",
+            description: "Timeout in seconds (optional, no default timeout)"
+          }
+        },
+        required: ["command"]
+      },
+      executor: fn arguments ->
+        command = string_arg(arguments, "command")
+        timeout_sec = optional_float_arg(arguments, "timeout")
+
+        if timeout_sec != nil and timeout_sec <= 0 do
+          raise "timeout must be greater than 0"
+        end
+
+        timeout_ms = if timeout_sec, do: trunc(timeout_sec * 1000)
+        start_ms = System.monotonic_time(:millisecond)
+
+        result = ShellExec.run(command, cwd: cwd, timeout: timeout_ms)
+
+        duration_sec = (System.monotonic_time(:millisecond) - start_ms) / 1000
+        truncation = truncate_tail(result.output)
+        output_text = if truncation.content == "", do: "(no output)", else: truncation.content
+        exit_code = result.exit_status
+
+        {output_text, full_output_path} =
+          if truncation.truncated do
+            path = write_temp_output(result.output)
+            {output_text <> build_truncation_suffix(truncation, path), path}
+          else
+            {output_text, nil}
+          end
+
+        status =
+          cond do
+            result.timed_out ->
+              if timeout_sec do
+                formatted =
+                  timeout_sec
+                  |> Float.round(3)
+                  |> to_string()
+                  |> String.replace_suffix(".0", "")
+
+                "Command timed out after #{formatted} seconds"
+              else
+                "Command timed out"
+              end
+
+            result.cancelled ->
+              "Command cancelled"
+
+            is_integer(exit_code) and exit_code != 0 ->
+              "Command exited with code #{exit_code}"
+
+            not is_integer(exit_code) ->
+              "Command failed: #{inspect(exit_code)}"
+
+            true ->
+              nil
+          end
+
+        output_text = if status, do: output_text <> "\n\n[#{status}]", else: output_text
+
+        ok? =
+          is_integer(exit_code) and
+            exit_code == 0 and
+            not result.timed_out and
+            not result.cancelled
+
+        %Tools.AgentToolResult{
+          tool_call_id: "",
+          name: "bash",
+          ok: ok?,
+          content: output_text,
+          error: if(ok?, do: nil, else: status),
+          data: %{
+            "command" => command,
+            "exit_code" => exit_code,
+            "timed_out" => result.timed_out,
+            "cancelled" => result.cancelled,
+            "duration_seconds" => Float.round(duration_sec, 3),
+            "truncation" => truncation,
+            "full_output_path" => full_output_path
+          }
+        }
+      end
+    }
+  end
+
+  # Internal helpers
+
   defp string_arg(arguments, name) do
     case Map.get(arguments, name) do
       nil -> raise "Missing argument #{name}"
@@ -342,6 +449,14 @@ defmodule Eva.Coding.Tools do
     end
   end
 
+  defp optional_float_arg(arguments, name) do
+    case Map.get(arguments, name) do
+      nil -> nil
+      val when is_float(val) or is_integer(val) -> val * 1.0
+      _ -> raise "Argument \"#{name}\" is not a number"
+    end
+  end
+
   defp get_supported_image_mime_type(path) do
     mime_type = MIME.from_path(path)
     if mime_type in @supported_image_mime_types, do: mime_type, else: nil
@@ -404,6 +519,43 @@ defmodule Eva.Coding.Tools do
     end
   end
 
+  defp truncate_tail(
+         content,
+         max_lines \\ @default_max_output_lines,
+         max_bytes \\ @default_max_output_bytes
+       ) do
+    lines = split_lines_for_counting(content)
+    total_lines = length(lines)
+    total_bytes = byte_size(content)
+
+    cond do
+      total_lines <= max_lines and total_bytes <= max_bytes ->
+        truncation_result(
+          content: content,
+          truncated: false,
+          total_lines: total_lines,
+          total_bytes: total_bytes,
+          output_lines: total_lines,
+          output_bytes: total_bytes
+        )
+
+      true ->
+        {kept, _bytes, why, partial} = collect_upto_from_end(lines, max_lines, max_bytes)
+        output = Enum.join(kept, "\n")
+
+        truncation_result(
+          content: output,
+          truncated: true,
+          truncated_by: why,
+          total_lines: total_lines,
+          total_bytes: total_bytes,
+          output_lines: length(kept),
+          output_bytes: byte_size(output),
+          last_line_partial: partial
+        )
+    end
+  end
+
   defp collect_upto(lines, max_lines, max_bytes) do
     lines
     |> Enum.take(max_lines)
@@ -418,6 +570,44 @@ defmodule Eva.Coding.Tools do
         {:cont, {[line | acc], acc_bytes + line_bytes, "lines"}}
       end
     end)
+  end
+
+  defp collect_upto_from_end(lines, max_lines, max_bytes) do
+    lines
+    |> Enum.reverse()
+    |> Enum.take(max_lines)
+    |> Enum.with_index()
+    |> Enum.reduce_while(
+      {[], 0, "lines", false},
+      fn {line, index}, {kept_lines, kept_bytes, _, _} ->
+        newline_separator_bytes = if index == 0, do: 0, else: 1
+        line_bytes = byte_size(line) + newline_separator_bytes
+
+        cond do
+          index == 0 and line_bytes > max_bytes ->
+            clipped = truncate_string_to_bytes_from_end(line, max_bytes)
+            {:halt, {[clipped | kept_lines], byte_size(clipped), "bytes", true}}
+
+          kept_bytes + line_bytes > max_bytes ->
+            {:halt, {kept_lines, kept_bytes, "bytes", false}}
+
+          true ->
+            {:cont, {[line | kept_lines], kept_bytes + line_bytes, "lines", false}}
+        end
+      end
+    )
+  end
+
+  defp truncate_string_to_bytes_from_end(str, max_bytes) do
+    str_bytes = byte_size(str)
+
+    if str_bytes <= max_bytes do
+      str
+    else
+      skip = str_bytes - max_bytes
+      <<_::binary-size(^skip), rest::binary>> = str
+      rest
+    end
   end
 
   defp format_size(bytes) when bytes < 1024, do: "#{bytes}B"
@@ -515,5 +705,28 @@ defmodule Eva.Coding.Tools do
 
         {end_pos, :ok}
       end)
+  end
+
+  defp write_temp_output(output) do
+    path =
+      Path.join(System.tmp_dir!(), "eva_bash_output_#{System.system_time(:second)}.txt")
+
+    File.write!(path, output)
+    path
+  end
+
+  defp build_truncation_suffix(truncation, full_path) do
+    if truncation.last_line_partial do
+      "\n\n[Showing last #{format_size(truncation.output_bytes)} of line #{truncation.total_lines}. Full output: #{full_path}]"
+    else
+      start_line = truncation.total_lines - truncation.output_lines + 1
+      end_line = truncation.total_lines
+
+      if truncation.truncated_by == "lines" do
+        "\n\n[Showing lines #{start_line}-#{end_line} of #{truncation.total_lines}. Full output: #{full_path}]"
+      else
+        "\n\n[Showing lines #{start_line}-#{end_line} of #{truncation.total_lines} (#{format_size(@default_max_output_bytes)} limit). Full output: #{full_path}]"
+      end
+    end
   end
 end

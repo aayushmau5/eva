@@ -609,4 +609,104 @@ defmodule Eva.Coding.ToolsTest do
       end
     end
   end
+
+  describe "bash" do
+    test "executes a simple command", %{tmp: tmp} do
+      tool = CodingTools.bash_tool(tmp)
+      result = tool.executor.(%{"command" => "echo hello"})
+
+      assert result.ok
+      assert result.content =~ "hello"
+      assert result.data["exit_code"] == 0
+      assert result.data["timed_out"] == false
+      assert result.data["cancelled"] == false
+      assert is_number(result.data["duration_seconds"])
+      refute result.data["truncation"].truncated
+    end
+
+    test "captures stderr in output", %{tmp: tmp} do
+      tool = CodingTools.bash_tool(tmp)
+      result = tool.executor.(%{"command" => "echo err >&2"})
+
+      assert result.ok
+      assert result.content =~ "err"
+    end
+
+    test "returns non-zero exit code", %{tmp: tmp} do
+      tool = CodingTools.bash_tool(tmp)
+      result = tool.executor.(%{"command" => "exit 42"})
+
+      refute result.ok
+      assert result.data["exit_code"] == 42
+      assert result.content =~ "exited with code 42"
+      assert result.error =~ "exited with code 42"
+    end
+
+    test "returns (no output) for empty stdout", %{tmp: tmp} do
+      tool = CodingTools.bash_tool(tmp)
+      result = tool.executor.(%{"command" => "true"})
+
+      assert result.ok
+      assert result.content == "(no output)"
+    end
+
+    test "runs in the given cwd", %{tmp: tmp} do
+      tool = CodingTools.bash_tool(tmp)
+      result = tool.executor.(%{"command" => "pwd"})
+
+      assert result.ok
+      assert String.trim(result.content) == tmp
+    end
+
+    test "truncates long output", %{tmp: tmp} do
+      tool = CodingTools.bash_tool(tmp)
+      result = tool.executor.(%{"command" => "yes 'x' | head -n 3000"})
+
+      assert result.ok
+      assert result.data["truncation"].truncated
+      assert result.content =~ "Full output:"
+      assert result.data["full_output_path"] != nil
+      assert File.exists?(result.data["full_output_path"])
+    end
+
+    test "raises on missing command", %{tmp: tmp} do
+      tool = CodingTools.bash_tool(tmp)
+
+      assert_raise RuntimeError, ~r/Missing argument command/, fn ->
+        tool.executor.(%{})
+      end
+    end
+
+    test "raises on non-string command", %{tmp: tmp} do
+      tool = CodingTools.bash_tool(tmp)
+
+      assert_raise RuntimeError, ~r/is not a string/, fn ->
+        tool.executor.(%{"command" => 123})
+      end
+    end
+
+    test "raises on zero timeout", %{tmp: tmp} do
+      tool = CodingTools.bash_tool(tmp)
+
+      assert_raise RuntimeError, ~r/timeout must be greater than 0/, fn ->
+        tool.executor.(%{"command" => "echo hi", "timeout" => 0})
+      end
+    end
+
+    test "raises on negative timeout", %{tmp: tmp} do
+      tool = CodingTools.bash_tool(tmp)
+
+      assert_raise RuntimeError, ~r/timeout must be greater than 0/, fn ->
+        tool.executor.(%{"command" => "echo hi", "timeout" => -1})
+      end
+    end
+
+    test "raises on non-number timeout", %{tmp: tmp} do
+      tool = CodingTools.bash_tool(tmp)
+
+      assert_raise RuntimeError, ~r/is not a number/, fn ->
+        tool.executor.(%{"command" => "echo hi", "timeout" => "abc"})
+      end
+    end
+  end
 end
