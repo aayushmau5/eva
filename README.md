@@ -51,6 +51,7 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
       - [x] bash
         - [ ] Explore just-bash(https://github.com/elixir-ai-tools/just_bash) for bash interpreter(& virtual FS)
       - [ ] Q/A
+      - [ ] Web search/fetch
   - [ ] Subagents
   - [ ] Modes or Characters(?)(like amp)
     - [ ] Deep
@@ -69,6 +70,7 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
   - [ ] Slash commands (`/usage`, `/providers`, `/login`, `/logout`, ...)
   - [ ] Pretty lil animations
 - Explore https://github.com/elixir-vibe/vibe for further stuff
+  - https://x.com/davydog187/status/2075320738261659775
 
 ## What Sets It Apart
 
