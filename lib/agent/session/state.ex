@@ -21,6 +21,7 @@ defmodule Eva.Agent.Session.State do
     field :entries, [Entries.t()]
   end
 
+  @spec from_entries(entries :: [Entries.t()], leaf_id :: String.t() | nil) :: __MODULE__.t()
   def from_entries(entries, leaf_id \\ nil) do
     replay_entries = if leaf_id, do: Tree.path_to_entry(entries, leaf_id), else: entries
 
@@ -92,6 +93,18 @@ defmodule Eva.Agent.Session.State do
       context_entry_ids: Enum.map(message_rows, fn {id, _msg} -> id end),
       entries: replay_entries
     }
+  end
+
+  @spec latest_leaf_entry(entries :: [Entries.t()]) :: Entries.Leaf.t() | nil
+  def latest_leaf_entry(entries) do
+    Enum.reverse(entries)
+    |> Enum.reduce_while(nil, fn entry, _acc ->
+      if entry.type == "leaf" do
+        {:halt, entry}
+      else
+        {:cont, nil}
+      end
+    end)
   end
 
   # Replaces the first matching entry in message_rows whose id is in

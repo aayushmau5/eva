@@ -55,10 +55,18 @@ defmodule Eva.Agent.Messages do
     end
   end
 
-  def from_json_map(map) when is_map(map) do
+  def from_json_map(%{"role" => "user"} = map) do
+    struct!(UserMessage, Utils.to_atom_keys(map))
+  end
+
+  def from_json_map(%{"role" => "assistant"} = map) do
     tc = (map["tool_calls"] || []) |> Enum.map(&Tools.ToolCall.from_json_map/1)
     fields = Utils.to_atom_keys(map) |> Map.put(:tool_calls, tc)
     struct!(AssistantMessage, fields)
+  end
+
+  def from_json_map(%{"role" => "tool"} = map) do
+    struct!(ToolResultMessage, Utils.to_atom_keys(map))
   end
 
   @type t() ::

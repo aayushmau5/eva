@@ -3,49 +3,70 @@ defmodule Eva.Agent.Harness do
 
   alias Eva.Agent.{Loop, Messages}
 
+  @type option ::
+          {:provider_pid, pid()}
+          | {:tools, [any()]}
+          | {:max_turns, pos_integer() | nil}
+          | {:messages, [Eva.Agent.Messages.t()]}
+          | {:queue_mode, :one_at_a_time | :all}
+          | {:name, atom()}
+
+  @type options :: [option()]
+
   # -- Public API --
 
+  @spec start_link(options()) :: GenServer.on_start()
   def start_link(opts) do
     name = Keyword.get(opts, :name, __MODULE__)
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
+  @spec prompt(GenServer.server(), String.t()) :: {:ok, map()} | {:error, :already_running}
   def prompt(pid \\ __MODULE__, prompt) do
     GenServer.call(pid, {:prompt, prompt})
   end
 
+  @spec continue(GenServer.server()) :: {:ok, map()} | {:error, :already_running}
   def continue(pid \\ __MODULE__) do
     GenServer.call(pid, :continue)
   end
 
+  @spec steer(GenServer.server(), String.t()) :: :ok
   def steer(pid \\ __MODULE__, content) do
     GenServer.call(pid, {:steer, content})
   end
 
+  @spec follow_up(GenServer.server(), String.t()) :: :ok
   def follow_up(pid \\ __MODULE__, content) do
     GenServer.call(pid, {:follow_up, content})
   end
 
+  @spec cancel(GenServer.server()) :: :ok
   def cancel(pid \\ __MODULE__) do
     GenServer.call(pid, :cancel)
   end
 
+  @spec update_messages(GenServer.server(), [Messages.t()]) :: {:ok, map()}
   def update_messages(pid \\ __MODULE__, messages) do
     GenServer.call(pid, {:update_messages, messages})
   end
 
+  @spec update_tools(GenServer.server(), [any()]) :: {:ok, map()}
   def update_tools(pid \\ __MODULE__, tools) do
     GenServer.call(pid, {:update_tools, tools})
   end
 
+  @spec change_provider(GenServer.server(), pid()) :: {:ok, map()}
   def change_provider(pid \\ __MODULE__, provider_pid) do
     GenServer.call(pid, {:change_provider, provider_pid})
   end
 
+  @spec get_state(GenServer.server()) :: {:ok, map()}
   def get_state(pid \\ __MODULE__) do
     GenServer.call(pid, :get_state)
   end
 
+  @spec has_queued_messages?(GenServer.server()) :: boolean()
   def has_queued_messages?(pid \\ __MODULE__) do
     GenServer.call(pid, :has_queued_messages?)
   end

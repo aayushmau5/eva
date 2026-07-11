@@ -8,6 +8,12 @@ defmodule Eva.Coding.Tools do
   @default_max_output_lines 2_000
   @supported_image_mime_types ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
+  @spec coding_tools(cwd :: String.t()) :: [%Tools.AgentTool{}]
+  def coding_tools(cwd) do
+    [read_tool(cwd), write_tool(cwd), edit_tool(cwd), bash_tool(cwd)]
+  end
+
+  @spec read_tool(cwd :: String.t()) :: %Tools.AgentTool{}
   def read_tool(cwd) do
     %Tools.AgentTool{
       name: "read",
@@ -151,6 +157,7 @@ defmodule Eva.Coding.Tools do
     }
   end
 
+  @spec read_tool(cwd :: String.t()) :: %Tools.AgentTool{}
   def write_tool(cwd) do
     %Tools.AgentTool{
       name: "write",
@@ -186,6 +193,7 @@ defmodule Eva.Coding.Tools do
     }
   end
 
+  @spec read_tool(cwd :: String.t()) :: %Tools.AgentTool{}
   def edit_tool(cwd) do
     %Tools.AgentTool{
       name: "edit",
@@ -259,6 +267,7 @@ defmodule Eva.Coding.Tools do
     }
   end
 
+  @spec read_tool(cwd :: String.t()) :: %Tools.AgentTool{}
   def bash_tool(cwd) do
     %Tools.AgentTool{
       name: "bash",

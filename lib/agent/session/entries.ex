@@ -49,9 +49,10 @@ defmodule Eva.Agent.Session.Entries do
       field :parent_id, String.t()
       field :timestamp, float(), enforce: true
       field :type, String.t(), default: "message"
-      field :message, Messages.AssistantMessage.t()
+      field :message, Messages.t()
     end
 
+    @spec new(map()) :: __MODULE__.t()
     def new(attrs) do
       %__MODULE__{
         id: Utils.new_entry_id(),
@@ -75,6 +76,7 @@ defmodule Eva.Agent.Session.Entries do
       field :model, String.t()
     end
 
+    @spec new(map()) :: __MODULE__.t()
     def new(attrs) do
       %__MODULE__{
         id: Utils.new_entry_id(),
@@ -98,6 +100,7 @@ defmodule Eva.Agent.Session.Entries do
       field :thinking_level, String.t() | nil
     end
 
+    @spec new(map()) :: __MODULE__.t()
     def new(attrs) do
       %__MODULE__{
         id: Utils.new_entry_id(),
@@ -122,6 +125,7 @@ defmodule Eva.Agent.Session.Entries do
       field :replaces_entry_ids, [String.t()]
     end
 
+    @spec new(map()) :: __MODULE__.t()
     def new(attrs) do
       %__MODULE__{
         id: Utils.new_entry_id(),
@@ -147,6 +151,7 @@ defmodule Eva.Agent.Session.Entries do
       field :branch_root_id, String.t() | nil
     end
 
+    @spec new(map()) :: __MODULE__.t()
     def new(attrs) do
       %__MODULE__{
         id: Utils.new_entry_id(),
@@ -171,6 +176,7 @@ defmodule Eva.Agent.Session.Entries do
       field :label, String.t()
     end
 
+    @spec new(map()) :: __MODULE__.t()
     def new(attrs) do
       %__MODULE__{
         id: Utils.new_entry_id(),
@@ -188,12 +194,13 @@ defmodule Eva.Agent.Session.Entries do
 
     typedstruct do
       field :id, String.t(), enforce: true
-      field :parent_id, String.t() | nil
+      field :parent_id, String.t()
       field :timestamp, float()
       field :type, String.t(), default: "leaf"
-      field :entry_id, String.t() | nil
+      field :entry_id, String.t()
     end
 
+    @spec new(map()) :: __MODULE__.t()
     def new(attrs) do
       %__MODULE__{
         id: Utils.new_entry_id(),
@@ -211,13 +218,14 @@ defmodule Eva.Agent.Session.Entries do
 
     typedstruct do
       field :id, String.t(), enforce: true
-      field :parent_id, String.t() | nil
+      field :parent_id, String.t()
       field :timestamp, float()
       field :type, String.t(), default: "session_info"
-      field :cwd, String.t() | nil
-      field :title, String.t() | nil
+      field :cwd, String.t()
+      field :title, String.t()
     end
 
+    @spec new(map()) :: __MODULE__.t()
     def new(attrs) do
       %__MODULE__{
         id: Utils.new_entry_id(),
@@ -243,6 +251,7 @@ defmodule Eva.Agent.Session.Entries do
       field :data, map()
     end
 
+    @spec new(map()) :: __MODULE__.t()
     def new(attrs) do
       %__MODULE__{
         id: Utils.new_entry_id(),
