@@ -184,6 +184,28 @@ defmodule Eva.Agent.Events do
     end
   end
 
+  @doc """
+  All the event modules defined
+  """
+  def event_modules do
+    [
+      AgentStart,
+      AgentEnd,
+      TurnStart,
+      TurnEnd,
+      MessageStart,
+      MessageDelta,
+      ThinkingDelta,
+      MessageEnd,
+      ToolExecutionStart,
+      ToolExecutionUpdate,
+      ToolExecutionEnd,
+      QueueUpdate,
+      Retry,
+      Error
+    ]
+  end
+
   @type agent_event ::
           AgentStart.t()
           | AgentEnd.t()

@@ -1,10 +1,13 @@
 defmodule Eva.Agent.Harness do
   use GenServer
 
-  alias Eva.Agent.{Loop, Messages}
+  alias Eva.Agent.{Events, Loop, Messages}
+
+  @loop_events Events.event_modules()
 
   @type option ::
           {:provider_pid, pid()}
+          | {:coding_session_pid, pid()}
           | {:tools, [any()]}
           | {:max_turns, pos_integer() | nil}
           | {:messages, [Eva.Agent.Messages.t()]}
@@ -29,6 +32,21 @@ defmodule Eva.Agent.Harness do
   @spec continue(GenServer.server()) :: {:ok, map()} | {:error, :already_running}
   def continue(pid \\ __MODULE__) do
     GenServer.call(pid, :continue)
+  end
+
+  @spec tools(GenServer.server()) :: [Eva.Agent.Tools.tool()]
+  def tools(pid \\ __MODULE__) do
+    GenServer.call(pid, :tools)
+  end
+
+  @spec messages(pid()) :: [Eva.Agent.Messages.t()]
+  def messages(pid \\ __MODULE__) do
+    GenServer.call(pid, :messages)
+  end
+
+  @spec running?(pid()) :: boolean()
+  def running?(pid \\ __MODULE__) do
+    GenServer.call(pid, :running_status)
   end
 
   @spec steer(GenServer.server(), String.t()) :: :ok
@@ -76,6 +94,7 @@ defmodule Eva.Agent.Harness do
   @impl true
   def init(opts) do
     provider_pid = Keyword.fetch!(opts, :provider_pid)
+    coding_session_pid = Keyword.fetch!(opts, :coding_session_pid)
     tools = Keyword.get(opts, :tools, [])
     max_turns = Keyword.get(opts, :max_turns)
     messages = Keyword.get(opts, :messages, [])
@@ -87,6 +106,7 @@ defmodule Eva.Agent.Harness do
     {:ok,
      %{
        provider_pid: provider_pid,
+       coding_session_pid: coding_session_pid,
        messages: messages,
        tools: tools,
        max_turns: max_turns,
@@ -142,6 +162,19 @@ defmodule Eva.Agent.Harness do
     {:reply, :ok, state}
   end
 
+  def handle_call(:tools, _from, state) do
+    {:reply, state.tools, state}
+  end
+
+  def handle_call(:messages, _from, state) do
+    {:reply, state.messages, state}
+  end
+
+  @impl true
+  def handle_call(:running_status, _from, state) do
+    {:reply, state.running?, state}
+  end
+
   def handle_call(:has_queued_messages?, _from, state) do
     {:reply, state.steering_queue != [] or state.follow_up_queue != [], state}
   end
@@ -188,7 +221,11 @@ defmodule Eva.Agent.Harness do
     {:noreply, state}
   end
 
-  # TODO: broadcast agent events to subscribers via pubsub
+  def handle_info(%{__struct__: mod} = event, state) when mod in @loop_events do
+    send(state.coding_session_pid, event)
+    {:noreply, state}
+  end
+
   def handle_info(%{__struct__: _mod} = _event, state) do
     {:noreply, state}
   end

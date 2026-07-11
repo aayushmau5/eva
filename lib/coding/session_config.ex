@@ -9,7 +9,7 @@ defmodule Eva.Coding.SessionConfig do
     field :system_prompt, String.t()
     field :custom_system_prompt, String.t()
     field :append_system_prompt, String.t()
-    field :context_fdiles, map(), default: %{}
+    field :context_files, map(), default: %{}
     field :tools, [Tools.AgentTool.t()], default: []
   end
 end

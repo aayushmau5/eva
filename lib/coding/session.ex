@@ -11,6 +11,8 @@ defmodule Eva.Coding.Session do
   alias Eva.Agent.Harness
   # alias Eva.AI.Config, as: ProviderConfig
 
+  @harness_events Eva.Agent.Events.event_modules()
+
   use TypedStruct
 
   typedstruct do
@@ -27,25 +29,59 @@ defmodule Eva.Coding.Session do
     field :config, SessionConfig.t()
   end
 
+  # -- Public API --
+
+  @spec start_link(opts :: __MODULE__.t()) :: GenServer.on_start()
   def start_link(opts) do
     # TODO: think about how do we start this process?
     # Tied to a UI? Standalone? or separate startup: which spinds up UI as well as the Session?
     # One entry point: can branch into UI(TUI/Web) -> FOR V1 (haven't though about distributed connection aspect yet)
+    GenServer.start_link(__MODULE__, opts)
   end
 
+  @spec cwd(pid()) :: String.t()
   def cwd(pid) do
     GenServer.call(pid, :cwd)
   end
 
-  def model(pid) do
+  def model(_pid) do
     # TODO: return the active model for this session
     ""
   end
 
-  def provider_name(pid) do
+  @spec provider_name(pid()) :: String.t()
+  def provider_name(_pid) do
     # TODO: return the active provider name
     "lm_studio"
   end
+
+  @spec tools(pid()) :: [Eva.Agent.Tools.tool()]
+  def tools(pid) do
+    GenServer.call(pid, :tools)
+  end
+
+  @spec messages(pid()) :: [Eva.Agent.Messages.t()]
+  def messages(pid) do
+    GenServer.call(pid, :messages)
+  end
+
+  @spec state(pid()) :: SessionState.t()
+  def state(pid) do
+    GenServer.call(pid, :session_state)
+  end
+
+  @spec cancel(pid()) :: :ok
+  def cancel(pid) do
+    GenServer.call(pid, :cancel)
+  end
+
+  @spec prompt(pid(), prompt :: String.t(), streaming_behaviour :: atom() | nil) ::
+          :ok | {:error, String.t()}
+  def prompt(pid, prompt, streaming_behaviour \\ nil) do
+    GenServer.call(pid, {:prompt, prompt, streaming_behaviour})
+  end
+
+  # -- GenServer --
 
   @impl true
   def init(opts) do
@@ -73,8 +109,8 @@ defmodule Eva.Coding.Session do
     tools =
       if length(config.tools) != 0, do: config.tools, else: CodingTools.coding_tools(config.cwd)
 
-    resource_paths = nil
-    resources = nil
+    _resource_paths = nil
+    _resources = nil
     system_prompt = config.system_prompt
 
     # TODO: since we only have one provider right now, we are not "refreshing" it against the entries
@@ -83,7 +119,12 @@ defmodule Eva.Coding.Session do
     provider_pid = spawn_provider(reasoning_effort: nil, system_prompt: system_prompt)
 
     harness_pid =
-      spawn_harness(provider_pid: provider_pid, tools: tools, messages: session_state.messages)
+      spawn_harness(
+        provider_pid: provider_pid,
+        coding_session_pid: self(),
+        tools: tools,
+        messages: session_state.messages
+      )
 
     {:noreply,
      %__MODULE__{
@@ -102,9 +143,53 @@ defmodule Eva.Coding.Session do
   end
 
   @impl true
-  def handle_info(:cwd, %__MODULE__{config: %SessionConfig{} = config} = state) do
+  def handle_call(:cwd, _from, %__MODULE__{config: %SessionConfig{} = config} = state) do
     {:reply, config.cwd, state}
   end
+
+  def handle_call(:tools, _from, %__MODULE__{} = state) do
+    tools = Harness.tools(state.harness_pid)
+    {:reply, tools, state}
+  end
+
+  def handle_call(:messages, _from, %__MODULE__{} = state) do
+    messages = Harness.messages(state.harness_pid)
+    {:reply, messages, state}
+  end
+
+  def handle_call(:session_state, _from, %__MODULE__{} = state) do
+    {:reply, state.session_state, state}
+  end
+
+  def handle_call(:cancel, _from, %__MODULE__{} = state) do
+    :ok = Harness.cancel(state.harness_pid)
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:prompt, prompt, streaming_behaviour}, _from, %__MODULE__{} = state) do
+    harness_running? = Harness.running?(state.harness_pid)
+
+    if harness_running? do
+      case streaming_behaviour do
+        :steer -> Harness.steer(state.harness_pid, prompt)
+        :follow_up -> Harness.follow_up(state.harness_pid, prompt)
+        _ -> {:error, "Harness already running. No streaming_behaviour is set."}
+      end
+    else
+      {:ok, _harness_state} = Harness.prompt(state.harness_pid, prompt)
+      :ok
+    end
+  end
+
+  # -- handle_info --
+  @impl true
+  def handle_info(%{__struct__: mod} = event, state) when mod in @harness_events do
+    # TODO: think about the communication layer(UI <-> Session). send() to linked parent process or use PubSub
+    dbg(event)
+    {:noreply, state}
+  end
+
+  # -- Private --
 
   @spec make_initial_entries(config :: SessionConfig.t()) :: [Entries.t()]
   defp make_initial_entries(%SessionConfig{} = config) do
