@@ -263,6 +263,47 @@ defmodule Eva.Agent.Session.Entries do
     end
   end
 
+  defmodule SessionIndexEntry do
+    @moduledoc """
+    Entry for `index.jsonl`. List of sessions for each project.
+    """
+    use TypedStruct
+
+    typedstruct do
+      field :id, String.t(), enforce: true
+      field :session_path, String.t(), enforce: true
+      field :cwd, String.t(), enforce: true
+      field :model, String.t(), enforce: true
+      field :provider_name, String.t()
+      field :title, String.t()
+      field :created_at, float(), enforce: true
+      field :updated_at, float(), enforce: true
+    end
+
+    @type attrs :: %{
+            id: String.t(),
+            session_path: String.t(),
+            cwd: String.t(),
+            model: String.t(),
+            provider_name: String.t() | nil,
+            title: String.t() | nil
+          }
+
+    @spec new(attrs :: attrs()) :: __MODULE__.t()
+    def new(attrs) do
+      %__MODULE__{
+        id: Map.get(attrs, :id, Utils.new_entry_id()),
+        session_path: Map.fetch!(attrs, :session_path),
+        cwd: Map.get(attrs, :cwd),
+        model: Map.get(attrs, :model),
+        provider_name: Map.get(attrs, :provider_name),
+        title: Map.get(attrs, :title),
+        created_at: Utils.timestamp(),
+        updated_at: Utils.timestamp()
+      }
+    end
+  end
+
   defimpl JSON.Encoder,
     for: [
       Message,
@@ -273,7 +314,8 @@ defmodule Eva.Agent.Session.Entries do
       Label,
       Leaf,
       SessionInfo,
-      Custom
+      Custom,
+      SessionIndexEntry
     ] do
     def encode(struct, opts) do
       struct |> Map.from_struct() |> JSON.Encoder.encode(opts)

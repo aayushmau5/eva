@@ -20,7 +20,7 @@ defmodule Eva.Agent.Harness do
 
   @spec start_link(options()) :: GenServer.on_start()
   def start_link(opts) do
-    name = Keyword.get(opts, :name, __MODULE__)
+    name = Keyword.get(opts, :name)
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
@@ -94,7 +94,7 @@ defmodule Eva.Agent.Harness do
   @impl true
   def init(opts) do
     provider_pid = Keyword.fetch!(opts, :provider_pid)
-    coding_session_pid = Keyword.fetch!(opts, :coding_session_pid)
+    coding_session_pid = Keyword.get(opts, :coding_session_pid)
     tools = Keyword.get(opts, :tools, [])
     max_turns = Keyword.get(opts, :max_turns)
     messages = Keyword.get(opts, :messages, [])
@@ -222,7 +222,7 @@ defmodule Eva.Agent.Harness do
   end
 
   def handle_info(%{__struct__: mod} = event, state) when mod in @loop_events do
-    send(state.coding_session_pid, event)
+    if state.coding_session_pid, do: send(state.coding_session_pid, event)
     {:noreply, state}
   end
 
