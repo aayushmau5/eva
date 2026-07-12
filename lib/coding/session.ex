@@ -116,7 +116,12 @@ defmodule Eva.Coding.Session do
     # TODO: since we only have one provider right now, we are not "refreshing" it against the entries
     # We only know the user selected model after we read the messages(ModelChange). In that case, we need
     # to read the user's selected model and thinking level and spawn up the correct provider process.
-    provider_pid = spawn_provider(reasoning_effort: nil, system_prompt: system_prompt)
+    provider_pid =
+      spawn_provider(
+        reasoning_effort: nil,
+        system_prompt: system_prompt,
+        model: "nvidia/nemotron-3-nano-4b"
+      )
 
     harness_pid =
       spawn_harness(
