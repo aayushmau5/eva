@@ -21,6 +21,14 @@ defmodule Eva.AI.LmStudio do
     GenServer.call(pid, {:change_model, model})
   end
 
+  @spec run(
+          pid(),
+          run_opts :: %{listener_pid: pid(), messages: [Messages.t()], tools: [Tools.tool()]}
+        ) :: :ok
+  def run(pid \\ __MODULE__, run_opts) do
+    GenServer.cast(pid, {:run, run_opts})
+  end
+
   @impl true
   def init(opts) do
     state = %{

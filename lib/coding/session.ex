@@ -196,7 +196,8 @@ defmodule Eva.Coding.Session do
   # -- handle_info --
   @impl true
   def handle_info(%{__struct__: mod} = event, state) when mod in @harness_events do
-    # TODO: use pubsub instead of send
+    # TODO: perform something action and then send
+    # use pubsub instead of send
     if state.config.listener_pid do
       send(state.config.listener_pid, event)
     end
