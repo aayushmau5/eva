@@ -3,7 +3,7 @@ defmodule Eva.Coding.Paths do
 
   typedstruct do
     field :home, String.t(), default: Path.join([Path.expand("~"), ".eva"])
-    field :agents_home, String.t(), default: Path.join([Path.expand("~"), ".eva", "agents"])
+    field :agents_home, String.t(), default: Path.join([Path.expand("~"), ".agents"])
   end
 
   @spec sessions_dir(t()) :: String.t()

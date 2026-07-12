@@ -285,7 +285,9 @@ defmodule Eva.Coding.ContextWindow do
   defp split_previous_compaction_summary(messages) do
     if length(messages) > 0 do
       [first | rest] = messages
-      if first.role != "user" or not String.starts_with?(first.content, @compaction_summary_prefix) do
+
+      if first.role != "user" or
+           not String.starts_with?(first.content, @compaction_summary_prefix) do
         {nil, messages}
       else
         {String.replace_prefix(first.content, @compaction_summary_prefix, ""), rest}
