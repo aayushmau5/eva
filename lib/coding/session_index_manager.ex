@@ -26,6 +26,11 @@ defmodule Eva.Coding.SessionIndexManager do
 
   # -- Public --
 
+  @spec new(paths :: Eva.Coding.Paths.t()) :: t()
+  def new(paths \\ nil) do
+    if not is_nil(paths), do: %__MODULE__{paths: paths}, else: %__MODULE__{}
+  end
+
   @spec list_sessions(t(), cwd :: String.t() | nil) :: [SessionIndexEntry.t()]
   def list_sessions(%__MODULE__{} = manager, cwd \\ nil) do
     if is_nil(cwd) do

@@ -15,10 +15,15 @@ defmodule Eva.Agent.Session.Storage.Jsonl do
   @moduledoc """
   JSONL storage for entries.
   """
+  use TypedStruct
+
   alias Eva.Agent.Session.Jsonl
 
-  defstruct [:path]
+  typedstruct do
+    field :path, String.t(), enforce: true
+  end
 
+  @spec new(path :: String.t()) :: t()
   def new(path) when is_binary(path) do
     %__MODULE__{path: path}
   end

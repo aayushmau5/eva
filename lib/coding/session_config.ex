@@ -10,6 +10,7 @@ defmodule Eva.Coding.SessionConfig do
     field :custom_system_prompt, String.t()
     field :append_system_prompt, String.t()
     field :context_files, map(), default: %{}
-    field :tools, [Tools.AgentTool.t()], default: []
+    field :tools, [Tools.AgentTool.t()] | [], default: []
+    field :listener_pid, pid() | nil, default: nil
   end
 end

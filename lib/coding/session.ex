@@ -31,7 +31,7 @@ defmodule Eva.Coding.Session do
 
   # -- Public API --
 
-  @spec start_link(opts :: __MODULE__.t()) :: GenServer.on_start()
+  @spec start_link(opts :: %{config: SessionConfig.t()}) :: GenServer.on_start()
   def start_link(opts) do
     # TODO: think about how do we start this process?
     # Tied to a UI? Standalone? or separate startup: which spinds up UI as well as the Session?
@@ -171,21 +171,31 @@ defmodule Eva.Coding.Session do
 
     if harness_running? do
       case streaming_behaviour do
-        :steer -> Harness.steer(state.harness_pid, prompt)
-        :follow_up -> Harness.follow_up(state.harness_pid, prompt)
-        _ -> {:error, "Harness already running. No streaming_behaviour is set."}
+        :steer ->
+          :ok = Harness.steer(state.harness_pid, prompt)
+          {:reply, :ok, state}
+
+        :follow_up ->
+          :ok = Harness.follow_up(state.harness_pid, prompt)
+          {:reply, :ok, state}
+
+        _ ->
+          {:reply, {:error, "Harness already running. No streaming_behaviour is set."}, state}
       end
     else
       {:ok, _harness_state} = Harness.prompt(state.harness_pid, prompt)
-      :ok
+      {:reply, :ok, state}
     end
   end
 
   # -- handle_info --
   @impl true
   def handle_info(%{__struct__: mod} = event, state) when mod in @harness_events do
-    # TODO: think about the communication layer(UI <-> Session). send() to linked parent process or use PubSub
-    dbg(event)
+    # TODO: use pubsub instead of send
+    if state.config.listener_pid do
+      send(state.config.listener_pid, event)
+    end
+
     {:noreply, state}
   end
 
