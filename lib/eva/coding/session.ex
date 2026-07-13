@@ -3,13 +3,17 @@ defmodule Eva.Coding.Session do
   The beast.
   """
   use GenServer
+
+  alias Eva.AI.LmStudio
+  alias Eva.AI.Config, as: ProviderConfig
+
   alias Eva.Agent.Session.{Storage, Entries}
   alias Eva.Agent.Session.State, as: SessionState
+  alias Eva.Agent.Harness
+  alias Eva.Agent.Events, as: AgentEvents
+
   alias Eva.Coding.SessionConfig
   alias Eva.Coding.Tools, as: CodingTools
-  alias Eva.AI.LmStudio
-  alias Eva.Agent.Harness
-  # alias Eva.AI.Config, as: ProviderConfig
 
   @harness_events Eva.Agent.Events.event_modules()
 
@@ -26,7 +30,9 @@ defmodule Eva.Coding.Session do
     field :resource_diagnostics, list()
     field :command_registry, list()
     field :pending_initial_entries, [Entries.t()]
+    field :persisted_count, non_neg_integer(), default: 0
     field :config, SessionConfig.t()
+    field :provider_config, ProviderConfig.t()
   end
 
   # -- Public API --
@@ -96,6 +102,10 @@ defmodule Eva.Coding.Session do
 
     pending_initial_entries = if length(entries) != 0, do: [], else: make_initial_entries(config)
 
+    if pending_initial_entries != [] do
+      Enum.each(pending_initial_entries, &Storage.append(config.storage, &1))
+    end
+
     entries =
       if length(entries) != 0, do: detach_missing_parents(entries), else: pending_initial_entries
 
@@ -109,17 +119,35 @@ defmodule Eva.Coding.Session do
     tools =
       if length(config.tools) != 0, do: config.tools, else: CodingTools.coding_tools(config.cwd)
 
-    _resource_paths = nil
-    _resources = nil
-    system_prompt = config.system_prompt
+    resources =
+      if is_nil(config.resource_paths),
+        do: load_resources(%Eva.Coding.Resources{cwd: config.cwd}, config.context_files),
+        else: config.resource_paths
+
+    system_prompt =
+      if is_nil(config.system_prompt) or config.system_prompt != "",
+        do:
+          %Eva.Coding.SystemPrompt.Options{
+            cwd: config.cwd,
+            tools: tools,
+            skills: resources.skills,
+            custom_prompt: config.custom_system_prompt,
+            append_system_prompt: config.append_system_prompt,
+            context_files: resources.context_files
+          }
+          |> Eva.Coding.SystemPrompt.build(),
+        else: config.system_prompt
+
+    %Eva.AI.Config{} = provider_config = config.provider_config
+    provider_config = %Eva.AI.Config{provider_config | system_prompt: system_prompt}
 
     # TODO: since we only have one provider right now, we are not "refreshing" it against the entries
     # We only know the user selected model after we read the messages(ModelChange). In that case, we need
     # to read the user's selected model and thinking level and spawn up the correct provider process.
     provider_pid =
       spawn_provider(
-        reasoning_effort: nil,
-        system_prompt: system_prompt,
+        reasoning_effort: provider_config.reasoning_effort,
+        system_prompt: provider_config.system_prompt,
         model: "nvidia/nemotron-3-nano-4b"
       )
 
@@ -131,6 +159,8 @@ defmodule Eva.Coding.Session do
         messages: session_state.messages
       )
 
+    persisted_count = length(session_state.messages)
+
     {:noreply,
      %__MODULE__{
        state
@@ -138,12 +168,14 @@ defmodule Eva.Coding.Session do
          harness_pid: harness_pid,
          session_state: session_state,
          last_parent_id: last_parent_id(session_state),
-         skills: [],
-         prompt_templates: [],
-         context_files: [],
-         resource_diagnostics: [],
+         skills: resources.skills,
+         prompt_templates: resources.prompt_templates,
+         context_files: resources.context_files,
+         resource_diagnostics: resources.diagnostics,
          command_registry: [],
-         pending_initial_entries: pending_initial_entries
+         persisted_count: persisted_count,
+         pending_initial_entries: pending_initial_entries,
+         provider_config: provider_config
      }}
   end
 
@@ -189,19 +221,33 @@ defmodule Eva.Coding.Session do
       end
     else
       {:ok, _harness_state} = Harness.prompt(state.harness_pid, prompt)
+      state = persist_new_messages(state)
       {:reply, :ok, state}
     end
   end
 
   # -- handle_info --
   @impl true
-  def handle_info(%{__struct__: mod} = event, state) when mod in @harness_events do
-    # TODO: perform something action and then send
-    # use pubsub instead of send
-    if state.config.listener_pid do
-      send(state.config.listener_pid, event)
-    end
+  def handle_info(%AgentEvents.MessageEnd{} = event, state) do
+    forward_event(state, event)
+    state = persist_new_messages(state)
+    {:noreply, state}
+  end
 
+  def handle_info(%AgentEvents.ToolExecutionEnd{} = event, state) do
+    forward_event(state, event)
+    state = persist_new_messages(state)
+    {:noreply, state}
+  end
+
+  def handle_info(%AgentEvents.AgentEnd{} = event, state) do
+    forward_event(state, event)
+    state = persist_new_messages(state)
+    {:noreply, state}
+  end
+
+  def handle_info(%{__struct__: mod} = event, state) when mod in @harness_events do
+    forward_event(state, event)
     {:noreply, state}
   end
 
@@ -248,6 +294,47 @@ defmodule Eva.Coding.Session do
       state.active_leaf_id != nil -> state.active_leaf_id
       not is_nil(state.entries) and length(state.entries) > 0 -> List.last(state.entries).id
       true -> nil
+    end
+  end
+
+  defp load_resources(_resource_paths, _explicit_context_files) do
+    # load skills with diagnostics
+    # load prompt templates
+    # discover project context + explicit context files
+
+    %{
+      skills: [],
+      prompt_templates: [],
+      context_files: [],
+      diagnostics: []
+    }
+  end
+
+  # defp try_auto_compact(%__MODULE__{} = state) do
+  #   nil
+  # end
+
+  defp persist_new_messages(state) do
+    messages = Harness.messages(state.harness_pid)
+    new_messages = Enum.drop(messages, state.persisted_count)
+
+    state =
+      Enum.reduce(new_messages, state, fn message, acc ->
+        entry = Entries.Message.new(%{parent_id: acc.last_parent_id, message: message})
+        Storage.append(acc.config.storage, entry)
+        leaf = Entries.Leaf.new(%{parent_id: entry.id, entry_id: entry.id})
+        Storage.append(acc.config.storage, leaf)
+        %{acc | last_parent_id: entry.id}
+      end)
+
+    %{state | persisted_count: length(messages)}
+  end
+
+  # Send events to listener_pid
+  # `send` based. To be refactored into PubSub
+  defp forward_event(state, event) do
+    if state.config.listener_pid do
+      send(state.config.listener_pid, event)
     end
   end
 end

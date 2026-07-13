@@ -31,6 +31,11 @@ defmodule Eva.Test.MockHarness do
   end
 
   @impl true
+  def handle_call({:update_messages, _messages}, _from, state) do
+    {:reply, {:ok, %{}}, state}
+  end
+
+  @impl true
   def handle_call(:get_events, _from, state) do
     {:reply, Enum.reverse(state.events), state}
   end

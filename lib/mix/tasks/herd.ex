@@ -5,12 +5,13 @@ defmodule Mix.Tasks.Herd do
 
   use Mix.Task
 
+  alias Eva.Agent.Events
+  alias Eva.Agent.Session.Storage
+
   alias Eva.Coding.SessionIndexManager
   alias Eva.Coding.Session, as: CodingSession
   alias Eva.Coding.SessionConfig
-  alias Eva.Agent.Events
-  alias Eva.Agent.Session.Storage
-  alias Eva.Coding.SystemPrompt
+  alias Eva.AI.Config, as: ProviderConfig
 
   @impl true
   def run(args) do
@@ -27,7 +28,6 @@ defmodule Mix.Tasks.Herd do
   defp run_prompt(prompt) do
     cwd = File.cwd!()
     index_manager = SessionIndexManager.new()
-    tools = Eva.Coding.Tools.coding_tools(cwd)
 
     session_index_entry =
       SessionIndexManager.prepare_index(index_manager, %{
@@ -38,18 +38,11 @@ defmodule Mix.Tasks.Herd do
 
     jsonl_storage = Storage.Jsonl.new(session_index_entry.session_path)
 
-    system_prompt_options = %SystemPrompt.Options{
-      cwd: cwd,
-      tools: tools
-    }
-
     config = %SessionConfig{
       cwd: cwd,
       storage: jsonl_storage,
-      listener_pid: self(),
-      system_prompt: SystemPrompt.build(system_prompt_options)
-      # system_prompt:
-      #   "You are a weather assistant. Always reply with weather is nice. Don't use any tools."
+      provider_config: %ProviderConfig{model: "", base_url: "", endpoint: ""},
+      listener_pid: self()
     }
 
     {:ok, coding_session_pid} = CodingSession.start_link(%{config: config})

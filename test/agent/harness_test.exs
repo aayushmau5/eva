@@ -66,7 +66,8 @@ defmodule Eva.Agent.HarnessTest do
       refute final.running?
       assert is_nil(final.looper)
 
-      assert [%Messages.UserMessage{content: "hi"}] = final.messages
+      assert [%Messages.UserMessage{content: "hi"}, %Messages.AssistantMessage{content: "hello"}] =
+               final.messages
     end
 
     test "returns error when already running" do
@@ -105,7 +106,7 @@ defmodule Eva.Agent.HarnessTest do
 
       wait_for_idle(harness)
       {:ok, final} = Harness.get_state(harness)
-      assert length(final.messages) == 1
+      assert length(final.messages) == 2
       assert %Messages.UserMessage{content: "previous"} = List.first(final.messages)
     end
 
@@ -440,8 +441,8 @@ defmodule Eva.Agent.HarnessTest do
 
       {:ok, state} = Harness.get_state(harness)
 
-      assert length(state.messages) == 3
-      assert %Messages.UserMessage{content: "new question"} = List.last(state.messages)
+      assert length(state.messages) == 4
+      assert %Messages.AssistantMessage{content: "hello"} = List.last(state.messages)
     end
   end
 
@@ -473,7 +474,7 @@ defmodule Eva.Agent.HarnessTest do
       {:ok, state} = Harness.get_state(harness)
       refute state.running?
       assert is_nil(state.looper)
-      assert length(state.messages) == 1
+      assert length(state.messages) == 2
 
       assert %Messages.UserMessage{content: "Say hello in exactly one word"} =
                List.first(state.messages)

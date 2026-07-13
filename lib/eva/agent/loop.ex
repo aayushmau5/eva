@@ -97,12 +97,14 @@ defmodule Eva.Agent.Loop do
     case stream_response(ctx, messages) do
       {:ok, assistant_message} ->
         messages = messages ++ [assistant_message]
+        GenServer.call(ctx.harness_pid, {:update_messages, messages})
 
         if assistant_message.tool_calls == [] do
           send(ctx.harness_pid, %Events.TurnEnd{turn: turn})
           handle_no_tool_calls(ctx, messages, tool_by_name, turn)
         else
           messages = execute_tool_calls(assistant_message.tool_calls, tool_by_name, messages, ctx)
+          GenServer.call(ctx.harness_pid, {:update_messages, messages})
           send(ctx.harness_pid, %Events.TurnEnd{turn: turn})
           handle_post_tool_calls(ctx, messages, tool_by_name, turn)
         end
@@ -235,6 +237,7 @@ defmodule Eva.Agent.Loop do
 
   defp execute_tool(%Tools.AgentTool{} = tool, %Tools.ToolCall{} = tool_call) do
     Tools.execute(tool, tool_call.arguments)
+    |> Map.put(:tool_call_id, tool_call.id)
   rescue
     e ->
       %Tools.AgentToolResult{
@@ -287,12 +290,15 @@ defmodule Eva.Agent.Loop do
     if queued_messages == [] do
       :done
     else
+      messages = messages ++ queued_messages
+      GenServer.call(ctx.harness_pid, {:update_messages, messages})
+
       Enum.each(queued_messages, fn message ->
         send(ctx.harness_pid, %Events.MessageStart{message_role: message.role})
         send(ctx.harness_pid, %Events.MessageEnd{message: message})
       end)
 
-      {:continue, messages ++ queued_messages}
+      {:continue, messages}
     end
   end
 
