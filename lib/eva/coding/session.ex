@@ -278,10 +278,11 @@ defmodule Eva.Coding.Session do
   end
 
   defp spawn_provider(opts) do
-    {:ok, pid} =
-      LmStudio.start_link(opts)
-
-    pid
+    case LmStudio.start_link(opts) do
+      {:ok, pid} -> pid
+      {:error, {:already_started, pid}} -> pid
+      {:error, reason} -> raise reason
+    end
   end
 
   defp spawn_harness(opts) do

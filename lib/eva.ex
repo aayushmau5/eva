@@ -6,7 +6,7 @@ defmodule Eva do
   alias Eva.Coding.SessionIndexManager
   alias Eva.Coding.Paths, as: EvaPaths
 
-  def setup() do
+  def setup(listener_pid \\ nil) do
     cwd = File.cwd!()
     eva_paths = %EvaPaths{}
     session_index_manager = SessionIndexManager.new(eva_paths)
@@ -18,7 +18,8 @@ defmodule Eva do
       cwd: cwd,
       storage: storage,
       session_index_manager: session_index_manager,
-      provider_config: provider_config
+      provider_config: provider_config,
+      listener_pid: listener_pid
     }
 
     {:ok, coding_session_pid} = CodingSession.start_link(%{config: session_config})
