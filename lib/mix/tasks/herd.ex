@@ -32,7 +32,7 @@ defmodule Mix.Tasks.Herd do
     session_index_entry =
       SessionIndexManager.prepare_index(index_manager, %{
         cwd: cwd,
-        model: "liquid/lfm2.5-1.2b",
+        model: "nvidia/nemotron-3-nano-4b",
         provider_name: "lmstudio"
       })
 

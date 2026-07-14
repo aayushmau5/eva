@@ -19,6 +19,7 @@ defmodule Eva do
       storage: storage,
       session_index_manager: session_index_manager,
       provider_config: provider_config,
+      session_id: session_index_entry.id,
       listener_pid: listener_pid
     }
 

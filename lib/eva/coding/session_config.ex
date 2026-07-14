@@ -17,7 +17,7 @@ defmodule Eva.Coding.SessionConfig do
     field :provider_config, Eva.AI.Config.t()
     field :auto_compact_token_threshold, non_neg_integer(), default: 200_000
     field :auto_compact_enabled, boolean(), default: true
-    field :defer_index?, boolean(), default: true
+    field :defer_index?, boolean(), default: false
     field :listener_pid, pid() | nil, default: nil
   end
 end

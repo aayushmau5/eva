@@ -31,6 +31,9 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
 - [x] Very basic provider(currently LMStudio based API only)
   - [ ] Handle envs & config
   - [ ] Switch providers
+- [ ] Storage
+  - [x] Directory(sessions/index)
+  - [ ] Move to sqlite?
 - [ ] Agent Harness
   - [x] The agent loop
   - [ ] Handling distributed node messages

@@ -102,10 +102,6 @@ defmodule Eva.Coding.Session do
 
     pending_initial_entries = if length(entries) != 0, do: [], else: make_initial_entries(config)
 
-    if pending_initial_entries != [] do
-      Enum.each(pending_initial_entries, &Storage.append(config.storage, &1))
-    end
-
     entries =
       if length(entries) != 0, do: detach_missing_parents(entries), else: pending_initial_entries
 
@@ -159,8 +155,6 @@ defmodule Eva.Coding.Session do
         messages: session_state.messages
       )
 
-    persisted_count = length(session_state.messages)
-
     {:noreply,
      %__MODULE__{
        state
@@ -173,7 +167,6 @@ defmodule Eva.Coding.Session do
          context_files: resources.context_files,
          resource_diagnostics: resources.diagnostics,
          command_registry: [],
-         persisted_count: persisted_count,
          pending_initial_entries: pending_initial_entries,
          provider_config: provider_config
      }}
@@ -256,7 +249,7 @@ defmodule Eva.Coding.Session do
   @spec make_initial_entries(config :: SessionConfig.t()) :: [Entries.t()]
   defp make_initial_entries(%SessionConfig{} = config) do
     info = Entries.SessionInfo.new(%{cwd: config.cwd})
-    initial_model = "liquid/lfm2.5-1.2b"
+    initial_model = "nvidia/nemotron-3-nano-4b"
     model = Entries.ModelChange.new(%{parent_id: info.id, model: initial_model})
 
     thinking_level =
@@ -316,6 +309,28 @@ defmodule Eva.Coding.Session do
   # end
 
   defp persist_new_messages(state) do
+    # Create index file initially
+    if ok_to_index?(state) do
+      index_manager = state.config.session_index_manager
+
+      existing =
+        Eva.Coding.SessionIndexManager.get_session(
+          index_manager,
+          state.config.session_id
+        )
+
+      if is_nil(existing) do
+        Eva.Coding.SessionIndexManager.create_index(index_manager, %{
+          session_id: state.config.session_id,
+          cwd: state.config.cwd,
+          model: state.config.provider_config.model,
+          provider_name: provider_name(nil)
+        })
+      end
+    end
+
+    state = write_pending_initial_entries(state)
+
     messages = Harness.messages(state.harness_pid)
     new_messages = Enum.drop(messages, state.persisted_count)
 
@@ -337,5 +352,24 @@ defmodule Eva.Coding.Session do
     if state.config.listener_pid do
       send(state.config.listener_pid, event)
     end
+  end
+
+  defp write_pending_initial_entries(state) do
+    pending_entries = state.pending_initial_entries
+
+    if length(pending_entries) != 0 do
+      Enum.each(pending_entries, fn entry -> :ok = Storage.append(state.config.storage, entry) end)
+
+      %{state | pending_initial_entries: []}
+    else
+      state
+    end
+  end
+
+  defp ok_to_index?(state) do
+    length(state.pending_initial_entries) > 0 and
+      not state.config.defer_index? and
+      not is_nil(state.config.session_id) and
+      state.config.session_id != ""
   end
 end
