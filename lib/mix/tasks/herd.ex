@@ -10,7 +10,7 @@ defmodule Mix.Tasks.Herd do
 
   alias Eva.Coding.SessionIndexManager
   alias Eva.Coding.Session, as: CodingSession
-  alias Eva.Coding.SessionConfig
+  alias Eva.Coding.Session.SessionConfig
   alias Eva.AI.Config, as: ProviderConfig
 
   @impl true

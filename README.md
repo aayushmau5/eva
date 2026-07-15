@@ -41,12 +41,15 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
     - [x] Sessions
     - [ ] Memory
     - [ ] Compaction
+    - [ ] Skills
+    - [ ] Prompt templates
   - [x] Prompts
     - [x] Follow-up
     - [x] Queue
     - [ ] Assembling prompts
   - [ ] Tools
     - [ ] Tool calls
+      - [ ] Approvals
       - [ ] Elixir native?
       - [x] read
       - [x] write

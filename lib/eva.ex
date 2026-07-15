@@ -2,7 +2,7 @@ defmodule Eva do
   alias Eva.AI.Config, as: ProviderConfig
 
   alias Eva.Coding.Session, as: CodingSession
-  alias Eva.Coding.SessionConfig
+  alias Eva.Coding.Session.SessionConfig
   alias Eva.Coding.SessionIndexManager
   alias Eva.Coding.Paths, as: EvaPaths
 

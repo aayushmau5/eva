@@ -3,6 +3,7 @@ defmodule Eva.Coding.Session do
   The beast.
   """
   use GenServer
+  use TypedStruct
 
   alias Eva.AI.LmStudio
   alias Eva.AI.Config, as: ProviderConfig
@@ -11,26 +12,46 @@ defmodule Eva.Coding.Session do
   alias Eva.Agent.Session.State, as: SessionState
   alias Eva.Agent.Harness
   alias Eva.Agent.Events, as: AgentEvents
+  alias Eva.Agent.Tools, as: AgentTools
 
-  alias Eva.Coding.SessionConfig
+  alias Eva.Coding.Skills
   alias Eva.Coding.Tools, as: CodingTools
 
   @harness_events Eva.Agent.Events.event_modules()
 
-  use TypedStruct
+  # Config passed during init
+  typedstruct module: SessionConfig do
+    field :cwd, String.t(), enforce: true
+    field :storage, Eva.Agent.Session.Storage.t(), enforce: true
+    field :system_prompt, String.t()
+    field :custom_system_prompt, String.t()
+    field :append_system_prompt, String.t()
+    field :context_files, map(), default: %{}
+    field :tools, [AgentTools.AgentTool.t()] | [], default: []
+    field :resource_paths, Eva.Coding.Resources.t()
+    field :session_id, String.t()
+    field :session_index_manager, Eva.Coding.SessionIndexManager.t()
+    field :provider_config, Eva.AI.Config.t()
+    field :auto_compact_token_threshold, non_neg_integer(), default: 200_000
+    field :auto_compact_enabled, boolean(), default: true
+    field :defer_index?, boolean(), default: false
+    field :listener_pid, pid() | nil, default: nil
+  end
 
+  # Internal state representation
   typedstruct do
     field :provider_pid, pid()
     field :harness_pid, pid()
     field :session_state, SessionState.t()
     field :last_parent_id, String.t()
-    field :skills, list()
+    field :skills, [Skills.t()]
     field :prompt_templates, list()
     field :context_files, list()
     field :resource_diagnostics, list()
     field :command_registry, list()
     field :pending_initial_entries, [Entries.t()]
     field :persisted_count, non_neg_integer(), default: 0
+    # Config passed by caller
     field :config, SessionConfig.t()
     field :provider_config, ProviderConfig.t()
   end
@@ -198,6 +219,7 @@ defmodule Eva.Coding.Session do
 
   def handle_call({:prompt, prompt, streaming_behaviour}, _from, %__MODULE__{} = state) do
     harness_running? = Harness.running?(state.harness_pid)
+    prompt = expand_prompt_text(state, prompt)
 
     if harness_running? do
       case streaming_behaviour do
@@ -295,17 +317,32 @@ defmodule Eva.Coding.Session do
     end
   end
 
-  defp load_resources(_resource_paths, _explicit_context_files) do
+  defp load_resources(resource_paths, _explicit_context_files) do
     # load skills with diagnostics
     # load prompt templates
     # discover project context + explicit context files
 
     %{
-      skills: [],
+      skills: Skills.load(resource_paths),
       prompt_templates: [],
       context_files: [],
       diagnostics: []
     }
+  end
+
+  # Expand prompt text with markdown resources like skills or prompt templates.
+  defp expand_prompt_text(state, content) do
+    case Skills.expand_skill_command(content, state.skills) do
+      {:ok, nil} ->
+        content
+
+      {:ok, expanded} ->
+        expanded
+
+      {:error, _reason} ->
+        # TODO: Use logger to log the issue
+        content
+    end
   end
 
   # defp try_auto_compact(%__MODULE__{} = state) do

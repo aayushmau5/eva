@@ -58,8 +58,34 @@ defmodule Eva.Coding.SystemPrompt do
     ""
   end
 
-  defp format_skills_for_prompt(_options) do
-    ""
+  defp format_skills_for_prompt(%Options{} = options) do
+    if Enum.any?(options.tools, &(&1.name == "read")) && length(options.skills) > 0 do
+      lines = [
+        "\n\nThe following skills provide specialized instructions for specific tasks.",
+        "Read the full skill file when the task matches its description.",
+        "When a skill file references a relative path, resolve it against the skill directory ",
+        "(parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n",
+        "<available_skills>"
+      ]
+
+      skills_lines =
+        Enum.flat_map(options.skills, fn skill ->
+          description =
+            if is_nil(skill.description), do: "No description", else: skill.description
+
+          [
+            "  <skill>",
+            "    <name>#{skill.name}</name>",
+            "    <description>#{description}</description>",
+            "    <location>#{skill.path}</location>",
+            "  </skill>"
+          ]
+        end)
+
+      Enum.concat([lines, skills_lines, ["</available_skills>"]]) |> Enum.join("\n")
+    else
+      ""
+    end
   end
 
   # Format visible tools using prompt snippets.

@@ -90,7 +90,7 @@ defmodule Eva.Agent.Utils do
       else
         case String.split(trimmed, ":", parts: 2) do
           [key, value] ->
-            Map.put(acc, String.trim(key), String.trim(value, ~s|"'|))
+            Map.put(acc, String.trim(key), value |> String.trim() |> String.trim(~s|"'|))
 
           _ ->
             acc
