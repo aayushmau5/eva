@@ -76,6 +76,10 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
   - [ ] Slash commands (`/usage`, `/providers`, `/login`, `/logout`, ...)
   - [ ] Pretty lil animations
 - [ ] `catalogue.yml` or something for list of providers
+- [ ] Sandboxing
+  - [ ] The whole agent or code executions only?
+  - [ ] https://microsandbox.dev/
+  - [ ] Firecracker? https://github.com/harmont-dev/hyper
 - [ ] Observability
   - [ ] Number of sessions, time taken, total token usage, failures etc.
 - Explore https://github.com/elixir-vibe/vibe for further stuff
