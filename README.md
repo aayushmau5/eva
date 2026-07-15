@@ -72,6 +72,7 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
 - [ ] TUI (`ex_ratatui`) + BYO-FE
   - [ ] Slash commands (`/usage`, `/providers`, `/login`, `/logout`, ...)
   - [ ] Pretty lil animations
+- [ ] `catalogue.yml` or something for list of providers
 - [ ] Observability
   - [ ] Number of sessions, time taken, total token usage, failures etc.
 - Explore https://github.com/elixir-vibe/vibe for further stuff

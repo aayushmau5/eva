@@ -6,11 +6,15 @@ defmodule Eva do
   alias Eva.Coding.SessionIndexManager
   alias Eva.Coding.Paths, as: EvaPaths
 
-  def setup(listener_pid \\ nil) do
+  def setup(listener_pid \\ nil, existing_session_id \\ nil) do
     cwd = File.cwd!()
     eva_paths = %EvaPaths{}
     session_index_manager = SessionIndexManager.new(eva_paths)
-    session_index_entry = SessionIndexManager.prepare_index(session_index_manager, %{cwd: cwd})
+    opts = if existing_session_id, do: %{session_id: existing_session_id}, else: %{}
+
+    session_index_entry =
+      SessionIndexManager.prepare_index(session_index_manager, Map.merge(%{cwd: cwd}, opts))
+
     storage = %Eva.Agent.Session.Storage.Jsonl{path: session_index_entry.session_path}
     provider_config = %ProviderConfig{model: "", base_url: "", endpoint: ""}
 

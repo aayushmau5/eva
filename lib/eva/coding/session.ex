@@ -263,10 +263,14 @@ defmodule Eva.Coding.Session do
 
   @spec detach_missing_parents(entries :: [Entries.t()]) :: [Entries.t()]
   defp detach_missing_parents(entries) do
-    entry_ids = Enum.map(entries, fn entry -> entry.id end)
+    entry_ids = MapSet.new(entries, & &1.id)
 
-    Enum.filter(entries, fn entry ->
-      entry.parent_id && entry.parent_id in entry_ids
+    Enum.map(entries, fn entry ->
+      if entry.parent_id != nil && entry.parent_id not in entry_ids do
+        %{entry | parent_id: nil}
+      else
+        entry
+      end
     end)
   end
 
