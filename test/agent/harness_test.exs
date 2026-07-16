@@ -503,6 +503,6 @@ defmodule Eva.Agent.HarnessTest do
   end
 
   defp model_name do
-    Application.get_env(:eva, :lm_studio_model, "liquid/lfm2.5-1.2b")
+    Application.get_env(:eva, :lm_studio_model, "nvidia/nemotron-3-nano-4b")
   end
 end

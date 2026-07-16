@@ -19,6 +19,7 @@ defmodule Eva.Coding.Session do
   alias Eva.Coding.Tools, as: CodingTools
   alias Eva.Coding.SessionIndexManager
   alias Eva.Coding.SessionName
+  alias Eva.Coding.ProjectContext
 
   @harness_events AgentEvents.event_modules()
 
@@ -29,7 +30,7 @@ defmodule Eva.Coding.Session do
     field :system_prompt, String.t()
     field :custom_system_prompt, String.t()
     field :append_system_prompt, String.t()
-    field :context_files, map(), default: %{}
+    field :context_files, [ProjectContext.ContextFile.t()], default: []
     field :tools, [AgentTools.AgentTool.t()] | [], default: []
     field :resource_paths, Eva.Coding.Resources.t()
     field :session_id, String.t()
@@ -49,7 +50,7 @@ defmodule Eva.Coding.Session do
     field :last_parent_id, String.t()
     field :skills, [Skills.t()]
     field :prompt_templates, list()
-    field :context_files, list()
+    field :context_files, [ProjectContext.ContextFile.t()]
     field :resource_diagnostics, list()
     field :command_registry, list()
     field :pending_initial_entries, [Entries.t()]
@@ -355,15 +356,16 @@ defmodule Eva.Coding.Session do
     end
   end
 
-  defp load_resources(resource_paths, _explicit_context_files) do
+  defp load_resources(resource_paths, explicit_context_files) do
     # load skills with diagnostics
     # load prompt templates
-    # discover project context + explicit context files
+    discovered_context_files = ProjectContext.discover(resource_paths)
+    context_files = Enum.uniq_by(explicit_context_files ++ discovered_context_files, & &1.path)
 
     %{
       skills: Skills.load(resource_paths),
       prompt_templates: [],
-      context_files: [],
+      context_files: context_files,
       diagnostics: []
     }
   end

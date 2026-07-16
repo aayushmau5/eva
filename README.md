@@ -41,12 +41,14 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
     - [x] Sessions
     - [ ] Memory
     - [ ] Compaction
-    - [ ] Skills
+    - [x] Skills
     - [ ] Prompt templates
+    - [x] AGENTS.md
+    - [ ] Diagnostics
   - [x] Prompts
     - [x] Follow-up
     - [x] Queue
-    - [ ] Assembling prompts
+    - [x] Assembling prompts
   - [ ] Tools
     - [ ] Tool calls
       - [ ] Approvals
@@ -59,6 +61,7 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
       - [ ] Q/A
       - [ ] Web search/fetch
   - [ ] Subagents
+  - [ ] UI agnostic commands layer
   - [ ] Modes or Characters(?)(like amp)
     - [ ] Deep
     - [ ] Librarian

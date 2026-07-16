@@ -1,14 +1,18 @@
 defmodule Eva.Coding.SystemPrompt do
   use TypedStruct
+
   alias Eva.Agent.Tools
+
+  alias Eva.Coding.Skills
+  alias Eva.Coding.ProjectContext
 
   typedstruct module: Options do
     field :cwd, String.t(), enforce: true
     field :tools, [Tools.tool()] | [], default: []
-    field :skills, [], default: []
+    field :skills, [Skills.t()], default: []
     field :custom_prompt, String.t()
     field :append_system_prompt, String.t()
-    field :context_files, [], default: []
+    field :context_files, [ProjectContext.ContextFile.t()], default: []
     field :current_date, Date.t()
     field :extra_guidelines, [String.t()], default: []
   end
@@ -46,7 +50,7 @@ defmodule Eva.Coding.SystemPrompt do
     prompt =
       prompt <>
         append_section <>
-        format_project_context(options.context_files) <>
+        format_project_context(options) <>
         format_skills_for_prompt(options) <>
         "\nCurrent date: #{Date.to_iso8601(current_date)}" <>
         "\nCurrent working directory: #{options.cwd}"
@@ -54,8 +58,26 @@ defmodule Eva.Coding.SystemPrompt do
     prompt
   end
 
-  defp format_project_context(_context_files) do
-    ""
+  defp format_project_context(%Options{} = options) do
+    context_files = options.context_files
+
+    if length(context_files) > 0 do
+      lines = ["\n\n<project_context>", "", "Project-specific instructions and guidelines:", ""]
+
+      context_lines =
+        Enum.flat_map(context_files, fn file ->
+          [
+            ~s(<project_instructions path="#{file.path}">),
+            file.content,
+            "</project_instructions>",
+            ""
+          ]
+        end)
+
+      Enum.concat([lines, context_lines, ["</project_context>"]]) |> Enum.join("\n")
+    else
+      ""
+    end
   end
 
   defp format_skills_for_prompt(%Options{} = options) do

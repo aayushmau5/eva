@@ -57,7 +57,7 @@ defmodule Eva.AI.LmStudioTest do
         %Events.ProviderResponseEnd{} = ev ->
           {acc, ev}
       after
-        10000 -> {acc, nil}
+        50_000 -> {acc, nil}
       end
     end
   end
