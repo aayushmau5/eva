@@ -13,16 +13,19 @@ defmodule Eva.Coding.Session do
   alias Eva.Agent.Harness
   alias Eva.Agent.Events, as: AgentEvents
   alias Eva.Agent.Tools, as: AgentTools
+  alias Eva.Agent.Messages
 
   alias Eva.Coding.Skills
   alias Eva.Coding.Tools, as: CodingTools
+  alias Eva.Coding.SessionIndexManager
+  alias Eva.Coding.SessionName
 
-  @harness_events Eva.Agent.Events.event_modules()
+  @harness_events AgentEvents.event_modules()
 
   # Config passed during init
   typedstruct module: SessionConfig do
     field :cwd, String.t(), enforce: true
-    field :storage, Eva.Agent.Session.Storage.t(), enforce: true
+    field :storage, Storage.t(), enforce: true
     field :system_prompt, String.t()
     field :custom_system_prompt, String.t()
     field :append_system_prompt, String.t()
@@ -30,7 +33,7 @@ defmodule Eva.Coding.Session do
     field :tools, [AgentTools.AgentTool.t()] | [], default: []
     field :resource_paths, Eva.Coding.Resources.t()
     field :session_id, String.t()
-    field :session_index_manager, Eva.Coding.SessionIndexManager.t()
+    field :session_index_manager, SessionIndexManager.t()
     field :provider_config, Eva.AI.Config.t()
     field :auto_compact_token_threshold, non_neg_integer(), default: 200_000
     field :auto_compact_enabled, boolean(), default: true
@@ -54,6 +57,7 @@ defmodule Eva.Coding.Session do
     # Config passed by caller
     field :config, SessionConfig.t()
     field :provider_config, ProviderConfig.t()
+    field :auto_name_attempted, boolean(), default: false
   end
 
   # -- Public API --
@@ -100,6 +104,11 @@ defmodule Eva.Coding.Session do
   @spec cancel(pid()) :: :ok
   def cancel(pid) do
     GenServer.call(pid, :cancel)
+  end
+
+  @spec title(pid()) :: String.t() | nil
+  def title(pid) do
+    GenServer.call(pid, :title)
   end
 
   @spec prompt(pid(), prompt :: String.t(), streaming_behaviour :: atom() | nil) ::
@@ -217,6 +226,13 @@ defmodule Eva.Coding.Session do
     {:reply, :ok, state}
   end
 
+  def handle_call(:title, _from, %__MODULE__{} = state) do
+    index =
+      SessionIndexManager.get_session(state.config.session_index_manager, state.config.session_id)
+
+    index.title
+  end
+
   def handle_call({:prompt, prompt, streaming_behaviour}, _from, %__MODULE__{} = state) do
     harness_running? = Harness.running?(state.harness_pid)
     prompt = expand_prompt_text(state, prompt)
@@ -244,8 +260,16 @@ defmodule Eva.Coding.Session do
   # -- handle_info --
   @impl true
   def handle_info(%AgentEvents.MessageEnd{} = event, state) do
-    forward_event(state, event)
     state = persist_new_messages(state)
+
+    state =
+      if match?(%Messages.UserMessage{}, event.message) do
+        try_auto_name_session(event.message.content, state)
+      else
+        state
+      end
+
+    forward_event(state, event)
     {:noreply, state}
   end
 
@@ -263,6 +287,20 @@ defmodule Eva.Coding.Session do
 
   def handle_info(%{__struct__: mod} = event, state) when mod in @harness_events do
     forward_event(state, event)
+    {:noreply, state}
+  end
+
+  def handle_info({:session_name, name}, state) do
+    if not is_nil(name) and not is_nil(state.config.session_id) do
+      SessionIndexManager.touch_session(
+        state.config.session_index_manager,
+        state.config.session_id,
+        nil,
+        nil,
+        name
+      )
+    end
+
     {:noreply, state}
   end
 
@@ -404,6 +442,43 @@ defmodule Eva.Coding.Session do
       %{state | pending_initial_entries: []}
     else
       state
+    end
+  end
+
+  defp try_auto_name_session(content, state) do
+    if not state.auto_name_attempted and fresh_session?(state) do
+      session_pid = self()
+      model = state.config.provider_config.model
+
+      Task.start(fn ->
+        title =
+          SessionName.name_session(content, model) || SessionName.sanitize_session_name(content)
+
+        send(session_pid, {:session_name, title})
+      end)
+
+      %{state | auto_name_attempted: true}
+    else
+      state
+    end
+  end
+
+  defp fresh_session?(%__MODULE__{} = state) do
+    if not is_nil(state.config.session_id) do
+      session =
+        SessionIndexManager.get_session(
+          state.config.session_index_manager,
+          state.config.session_id
+        )
+
+      if not is_nil(session) && not is_nil(session.title) do
+        false
+      else
+        Harness.messages(state.harness_pid)
+        |> Enum.count(&match?(%Messages.UserMessage{}, &1)) == 1
+      end
+    else
+      false
     end
   end
 

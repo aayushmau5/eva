@@ -227,17 +227,19 @@ defmodule Eva.Agent.Harness do
   def handle_info(%Events.TurnStart{} = event, state) do
     if state.coding_session_pid, do: send(state.coding_session_pid, event)
 
-    # Message End event basically means user's prompt is now part of the transcript.
-    # So as soon as we get a Turn Start event, we send (additional) `MessageStart` and `MessageEnd` to signify that
-    # the message has been "committed"
-    if not is_nil(state.pending_prompt_event) and state.coding_session_pid do
-      send(state.coding_session_pid, %Events.MessageStart{message_role: "user"})
-      send(state.coding_session_pid, %Events.MessageEnd{message: state.pending_prompt_event})
+    state =
+      if not is_nil(state.pending_prompt_event) and state.coding_session_pid do
+        # Message End event basically means user's prompt is now part of the transcript.
+        # So as soon as we get a Turn Start event, we send (additional) `MessageStart` and `MessageEnd` to signify that
+        # the message has been "committed"
+        send(state.coding_session_pid, %Events.MessageStart{message_role: "user"})
+        send(state.coding_session_pid, %Events.MessageEnd{message: state.pending_prompt_event})
+        %{state | pending_prompt_event: nil}
+      else
+        state
+      end
 
-      %{state | pending_prompt_event: nil}
-    else
-      state
-    end
+    {:noreply, state}
   end
 
   def handle_info(%{__struct__: mod} = event, state) when mod in @loop_events do

@@ -16,7 +16,12 @@ defmodule Eva do
       SessionIndexManager.prepare_index(session_index_manager, Map.merge(%{cwd: cwd}, opts))
 
     storage = %Eva.Agent.Session.Storage.Jsonl{path: session_index_entry.session_path}
-    provider_config = %ProviderConfig{model: "", base_url: "", endpoint: ""}
+
+    provider_config = %ProviderConfig{
+      model: "nvidia/nemotron-3-nano-4b",
+      base_url: "",
+      endpoint: ""
+    }
 
     session_config = %SessionConfig{
       cwd: cwd,
