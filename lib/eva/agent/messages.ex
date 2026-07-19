@@ -3,31 +3,187 @@ defmodule Eva.Agent.Messages do
   Message types. Common between Agent & AI module.
   """
 
-  alias Eva.Agent.{Tools, Utils}
+  alias Eva.Agent.Utils
+
+  @type user_content :: String.t() | [TextContent.t() | ImageContent.t()]
+  @type assistant_content :: TextContent.t() | ThinkingContent.t() | ToolCall.t()
+  @type tool_result_content :: TextContent.t() | ImageContent.t()
+  @type agent_message ::
+          UserMessage.t()
+          | AssistantMessage.t()
+          | ToolResultMessage.t()
+          | BashExecutionMessage.t()
+          | CustomMessage.t()
+          | BranchSummaryMessage.t()
+          | CompactionSummaryMessage.t()
+
+  defmodule UsageCost do
+    @moduledoc """
+    Billed response cost in USD
+    """
+    use TypedStruct
+
+    typedstruct do
+      field :input, float(), default: 0.0
+      field :output, float(), default: 0.0
+      field :cache_read, float(), default: 0.0
+      field :cache_write, float(), default: 0.0
+      field :total, float(), default: 0.0
+    end
+  end
+
+  defmodule Usage do
+    @moduledoc """
+    Provider-reported token usage for one assistant response
+    """
+    use TypedStruct
+
+    typedstruct do
+      field :input, integer(), default: 0
+      field :output, integer(), default: 0
+      field :cache_read, integer(), default: 0
+      field :cache_write, integer(), default: 0
+      field :cache_write_1h, integer(), default: 0
+      field :reasoning, integer(), default: 0
+      field :total_tokens, integer(), default: 0
+      field :cost, UsageCost.t(), default: %UsageCost{}
+    end
+  end
+
+  defmodule TextContent do
+    use TypedStruct
+
+    typedstruct do
+      field :type, String.t(), default: "text"
+      field :text, String.t(), enforce: true
+      field :text_signature, String.t(), default: nil
+    end
+  end
+
+  defmodule ThinkingContent do
+    use TypedStruct
+
+    typedstruct do
+      field :type, String.t(), default: "thinking"
+      field :thinking, String.t(), enforce: true
+      field :thinking_signature, String.t(), default: nil
+      field :redacted, boolean(), default: false
+    end
+  end
+
+  defmodule ImageContent do
+    use TypedStruct
+
+    typedstruct do
+      field :type, String.t(), default: "image"
+      field :data, String.t(), enforce: true
+      field :mime_type, String.t(), enforce: true
+    end
+  end
+
+  defmodule ToolCall do
+    use TypedStruct
+
+    typedstruct do
+      field :type, String.t(), default: "tool_call"
+      field :id, String.t(), enforce: true
+      field :name, String.t(), enforce: true
+      field :arguments, map(), default: %{}
+      field :thought_signature, String.t()
+    end
+  end
 
   defmodule UserMessage do
     @moduledoc """
     A message authored by the user.
     """
     use TypedStruct
+    alias Eva.Agent.Utils
 
     typedstruct do
       field :role, String.t(), default: "user"
-      field :content, String.t()
+      field :content, Eva.Agent.Messages.user_content()
+      field :timestamp, integer(), default: Utils.current_timestamp_ms()
+    end
+
+    def text(%__MODULE__{content: content}) do
+      Eva.Agent.Messages.content_text(content)
+    end
+  end
+
+  defmodule AssistantDiagnosticError do
+    use TypedStruct
+
+    typedstruct do
+      field :name, String.t()
+      field :message, String.t()
+      field :stack, String.t()
+      field :code, String.t() | integer()
+    end
+  end
+
+  defmodule AssistantMessageDiagnostic do
+    use TypedStruct
+
+    typedstruct do
+      field :type, String.t()
+      field :timestamp, integer(), default: Utils.current_timestamp_ms()
+      field :error, Eva.Agent.Messages.AssistantDiagnosticError.t()
+      field :details, map()
     end
   end
 
   defmodule AssistantMessage do
     @moduledoc """
-    A message authored by the assistant, optionally requesting tool calls.
+    A message authored by the assistant with ordered content block.
     """
     use TypedStruct
-    alias Eva.Agent.Tools
+    alias Eva.Agent.Messages
+
+    @type stop_reason :: :stop | :length | :tool_use | :error | :aborted
 
     typedstruct do
       field :role, String.t(), default: "assistant"
-      field :content, String.t()
-      field :tool_calls, [Tools.ToolCall.t()]
+      field :content, [Messages.assistant_content()], default: []
+      field :api, String.t(), default: "unknown"
+      field :provider, String.t(), default: "unknown"
+      field :model, String.t(), default: "unknown"
+      field :response_model, String.t()
+      field :response_id, String.t()
+      field :diagnostics, [Messages.AssistantMessageDiagnostic.t()]
+      field :usage, Messages.Usage.t(), default: %Messages.Usage{}
+      field :stop_reason, stop_reason(), default: :stop
+      field :error_message, String.t()
+      field :timestamp, integer(), default: Utils.current_timestamp_ms()
+    end
+
+    @spec text(t()) :: String.t()
+    def text(%__MODULE__{content: content}) do
+      Enum.reduce(content, [], fn
+        %Messages.TextContent{text: text}, acc -> [text | acc]
+        _, acc -> acc
+      end)
+      |> Enum.reverse()
+      |> IO.iodata_to_binary()
+    end
+
+    @spec thinking_text(t()) :: String.t()
+    def thinking_text(%__MODULE__{content: content}) do
+      Enum.reduce(content, [], fn
+        %Messages.ThinkingContent{thinking: thinking}, acc -> [thinking | acc]
+        _, acc -> acc
+      end)
+      |> Enum.reverse()
+      |> IO.iodata_to_binary()
+    end
+
+    @spec tool_calls(t()) :: [Messages.ToolCall.t()]
+    def tool_calls(%__MODULE__{content: content}) do
+      Enum.reduce(content, [], fn
+        %Messages.ToolCall{} = tc, acc -> [tc | acc]
+        _, acc -> acc
+      end)
+      |> Enum.reverse()
     end
   end
 
@@ -38,39 +194,108 @@ defmodule Eva.Agent.Messages do
     use TypedStruct
 
     typedstruct do
-      field :role, String.t(), default: "tool"
+      field :role, String.t(), default: "tool_result"
       field :tool_call_id, String.t()
-      field :name, String.t()
-      field :content, String.t()
-      field :ok, boolean(), default: true
-      field :data, map(), default: nil
+      field :tool_name, String.t()
+      field :content, [Eva.Agent.Messages.tool_result_content()], default: []
       field :details, map(), default: nil
-      field :error, String.t(), default: nil
+      field :added_tool_names, [String.t()], default: nil
+      field :is_error, boolean(), default: false
+      field :timestamp, integer(), default: Eva.Agent.Utils.current_timestamp_ms()
+    end
+
+    @spec text(t()) :: String.t()
+    def text(%__MODULE__{content: content}) do
+      Eva.Agent.Messages.content_text(content)
     end
   end
 
-  defimpl JSON.Encoder, for: [UserMessage, AssistantMessage, ToolResultMessage] do
-    def encode(struct, opts) do
-      struct |> Map.from_struct() |> JSON.Encoder.encode(opts)
+  defmodule BashExecutionMessage do
+    use TypedStruct
+
+    typedstruct do
+      field :role, String.t(), default: "bash_execution"
+      field :command, String.t()
+      field :output, String.t()
+      field :exit_code, integer()
+      field :cancelled, boolean(), default: false
+      field :truncated, boolean(), default: false
+      field :full_output_path, String.t()
+      field :timestamp, integer(), default: Utils.current_timestamp_ms()
+      field :exclude_from_context, boolean(), default: false
     end
   end
 
-  def from_json_map(%{"role" => "user"} = map) do
-    struct!(UserMessage, Utils.to_atom_keys(map))
+  defmodule CustomMessage do
+    use TypedStruct
+
+    typedstruct do
+      field :role, String.t(), default: "custom"
+      field :custom_type, String.t()
+      field :content, Eva.Agent.Messages.user_content()
+      field :display, boolean(), default: true
+      field :details, map()
+      field :timestamp, integer(), default: Utils.current_timestamp_ms()
+    end
+
+    @spec text(t()) :: String.t()
+    def text(%__MODULE__{content: content}) do
+      Eva.Agent.Messages.content_text(content)
+    end
   end
 
-  def from_json_map(%{"role" => "assistant"} = map) do
-    tc = (map["tool_calls"] || []) |> Enum.map(&Tools.ToolCall.from_json_map/1)
-    fields = Utils.to_atom_keys(map) |> Map.put(:tool_calls, tc)
-    struct!(AssistantMessage, fields)
+  defmodule BranchSummaryMessage do
+    use TypedStruct
+
+    typedstruct do
+      field :role, String.t(), default: "branch_summary"
+      field :summary, String.t()
+      field :from_id, String.t()
+      field :timestamp, integer(), default: Utils.current_timestamp_ms()
+    end
   end
 
-  def from_json_map(%{"role" => "tool"} = map) do
-    struct!(ToolResultMessage, Utils.to_atom_keys(map))
+  defmodule CompactionSummaryMessage do
+    use TypedStruct
+
+    typedstruct do
+      field :role, String.t(), default: "compaction_summary"
+      field :summary, String.t()
+      field :tokens_before, integer()
+      field :timestamp, integer(), default: Utils.current_timestamp_ms()
+    end
   end
 
-  @type t() ::
-          UserMessage.t()
-          | AssistantMessage.t()
-          | ToolResultMessage.t()
+  # defimpl JSON.Encoder, for: [UserMessage, AssistantMessage, ToolResultMessage] do
+  #   def encode(struct, opts) do
+  #     struct |> Map.from_struct() |> JSON.Encoder.encode(opts)
+  #   end
+  # end
+
+  # def from_json_map(%{"role" => "user"} = map) do
+  #   struct!(UserMessage, Utils.to_atom_keys(map))
+  # end
+
+  # def from_json_map(%{"role" => "assistant"} = map) do
+  #   tc = (map["tool_calls"] || []) |> Enum.map(&Tools.ToolCall.from_json_map/1)
+  #   fields = Utils.to_atom_keys(map) |> Map.put(:tool_calls, tc)
+  #   struct!(AssistantMessage, fields)
+  # end
+
+  # def from_json_map(%{"role" => "tool"} = map) do
+  #   struct!(ToolResultMessage, Utils.to_atom_keys(map))
+  # end
+
+  @doc "Return visible text from string or text/image content."
+  @spec content_text(String.t() | [assistant_content()]) :: String.t()
+  def content_text(content) when is_binary(content), do: content
+
+  def content_text(content) when is_list(content) do
+    Enum.reduce(content, [], fn
+      %TextContent{text: text}, acc -> [text | acc]
+      _, acc -> acc
+    end)
+    |> Enum.reverse()
+    |> IO.iodata_to_binary()
+  end
 end

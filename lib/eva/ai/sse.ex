@@ -11,6 +11,14 @@ defmodule Eva.AI.Sse do
     {:line, JSON.decode!(line)}
   end
 
+  # Example of a line:
+  # {"choices": [
+  #   {
+  #     "delta": {
+  #       "reasoning_content": "Thinking "
+  #      }
+  #   }
+  # ]}
   def parse_delta(%{"choices" => [choice | _]} = _chunk) do
     delta = choice["delta"] || %{}
 

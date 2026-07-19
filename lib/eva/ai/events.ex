@@ -2,102 +2,101 @@ defmodule Eva.AI.Events do
   @moduledoc """
   Event structs emitted by AI providers.
   """
+  use TypedStruct
 
-  defmodule ProviderResponseStart do
-    @moduledoc """
-    The provider has started a model response.
-    """
-    use TypedStruct
+  alias Eva.Agent.Messages
 
-    typedstruct do
-      field :type, String.t(), default: "response_start"
-      field :model, String.t()
-    end
+  @type t ::
+          AgentStart.t()
+          | TextStart.t()
+          | TextDelta.t()
+          | TextEnd.t()
+          | ThinkingStart.t()
+          | ThinkingDelta.t()
+          | ThinkingEnd.t()
+          | ToolCallStart.t()
+          | ToolCallDelta.t()
+          | ToolCallEnd.t()
+          | AssistantDone.t()
+          | AssistantError.t()
+
+  @type done_reason :: :stop | :length | :tool_use
+  @type error_reason :: :aborted | :error
+
+  typedstruct module: AgentStart do
+    field :type, String.t(), default: "start"
+    field :partial, Messages.AssistantMessage.t()
   end
 
-  defmodule ProviderRetry do
-    @moduledoc """
-    The provider adapter is retrying a transient request failure.
-    """
-    use TypedStruct
-
-    typedstruct do
-      field :type, String.t(), default: "retry"
-      field :attempt, integer()
-      field :max_attempts, integer()
-      field :delay_seconds, float()
-      field :message, String.t()
-      field :data, map() | nil, default: nil
-    end
+  typedstruct module: TextStart do
+    field :type, String.t(), default: "text_start"
+    field :content_index, integer()
+    field :partial, Messages.AssistantMessage.t()
   end
 
-  defmodule ProviderTextDelta do
-    use TypedStruct
-
-    typedstruct do
-      field :type, String.t(), default: "text_delta"
-      field :delta, String.t()
-    end
+  typedstruct module: TextDelta do
+    field :type, String.t(), default: "text_delta"
+    field :content_index, integer()
+    field :delta, String.t()
+    field :partial, Messages.AssistantMessage.t()
   end
 
-  defmodule ProviderThinkingDelta do
-    @moduledoc """
-    A streamed thinking/reasoning fragment from the provider.
-    """
-    use TypedStruct
-
-    typedstruct do
-      field :type, String.t(), default: "thinking_delta"
-      field :delta, String.t()
-    end
+  typedstruct module: TextEnd do
+    field :type, String.t(), default: "text_end"
+    field :content_index, integer()
+    field :content, String.t()
+    field :partial, Messages.AssistantMessage.t()
   end
 
-  defmodule ProviderToolCall do
-    @moduledoc """
-    A complete tool call requested by the model.
-    """
-    use TypedStruct
-    alias Eva.Agent.Tools
-
-    typedstruct do
-      field :type, String.t(), default: "tool_call"
-      field :tool_call, Tools.ToolCall.t()
-    end
+  typedstruct module: ThinkingStart do
+    field :type, String.t(), default: "thinking_start"
+    field :content_index, integer()
+    field :partial, Messages.AssistantMessage.t()
   end
 
-  defmodule ProviderResponseEnd do
-    @moduledoc """
-    The provider has completed a model response.
-    """
-    use TypedStruct
-    alias Eva.Agent.Messages
-
-    typedstruct do
-      field :type, String.t(), default: "response_end"
-      field :message, Messages.AssistantMessage.t()
-      field :finish_reason, String.t() | nil, default: nil
-    end
+  typedstruct module: ThinkingDelta do
+    field :type, String.t(), default: "thinking_delta"
+    field :content_index, integer()
+    field :delta, String.t()
+    field :partial, Messages.AssistantMessage.t()
   end
 
-  defmodule ProviderError do
-    @moduledoc """
-    A provider-level error that can be surfaced by the agent layer.
-    """
-    use TypedStruct
-
-    typedstruct do
-      field :type, String.t(), default: "error"
-      field :message, String.t()
-      field :data, map() | nil, default: nil
-    end
+  typedstruct module: ThinkingEnd do
+    field :type, String.t(), default: "thinking_end"
+    field :content_index, integer()
+    field :content, String.t()
+    field :partial, Messages.AssistantMessage.t()
   end
 
-  @type provider_event ::
-          ProviderResponseStart.t()
-          | ProviderRetry.t()
-          | ProviderTextDelta.t()
-          | ProviderThinkingDelta.t()
-          | ProviderToolCall.t()
-          | ProviderResponseEnd.t()
-          | ProviderError.t()
+  typedstruct module: ToolCallStart do
+    field :type, String.t(), default: "tool_call_start"
+    field :content_index, integer()
+    field :partial, Messages.AssistantMessage.t()
+  end
+
+  typedstruct module: ToolCallDelta do
+    field :type, String.t(), default: "tool_call_delta"
+    field :content_index, integer()
+    field :delta, String.t()
+    field :partial, Messages.AssistantMessage.t()
+  end
+
+  typedstruct module: ToolCallEnd do
+    field :type, String.t(), default: "tool_call_end"
+    field :content_index, integer()
+    field :tool_call, Messages.ToolCall.t()
+    field :partial, Messages.AssistantMessage.t()
+  end
+
+  typedstruct module: AssistantDone do
+    field :type, String.t(), default: "done"
+    field :reason, Eva.AI.Events.done_reason()
+    field :message, Messages.AssistantMessage
+  end
+
+  typedstruct module: AssistantError do
+    field :type, String.t(), default: "error"
+    field :reason, Eva.AI.Events.error_reason()
+    field :error, Messages.AssistantMessage
+  end
 end
