@@ -1,28 +1,6 @@
 defmodule Eva.Agent.Session.Entries do
   @moduledoc """
   Session entry structs.
-
-
-  TODO: Explore.
-  ```
-  If you just need the common fields (id, parent_id, timestamp, type) without caring about the subtype, a protocol is the cleanest:
-  defprotocol Entry do
-    @spec id(t) :: String.t()
-    def id(entry)
-
-    @spec parent_id(t) :: String.t() | nil
-    def parent_id(entry)
-
-    @spec timestamp(t) :: float()
-    def timestamp(entry)
-
-    @spec type(t) :: String.t()
-    def type(entry)
-  end
-
-  # Then implement for each struct — they all have the same fields,
-  # but you could use `@derive` + a shared module helper.
-  ```
   """
 
   alias Eva.Agent.Messages
@@ -49,7 +27,7 @@ defmodule Eva.Agent.Session.Entries do
       field :parent_id, String.t()
       field :timestamp, float(), enforce: true
       field :type, String.t(), default: "message"
-      field :message, Messages.t()
+      field :message, Messages.agent_message()
     end
 
     @spec new(map()) :: __MODULE__.t()
@@ -94,10 +72,10 @@ defmodule Eva.Agent.Session.Entries do
 
     typedstruct do
       field :id, String.t(), enforce: true
-      field :parent_id, String.t() | nil
+      field :parent_id, String.t()
       field :timestamp, float()
       field :type, String.t(), default: "thinking_level_change"
-      field :thinking_level, String.t() | nil
+      field :thinking_level, String.t()
     end
 
     @spec new(map()) :: __MODULE__.t()
@@ -118,7 +96,7 @@ defmodule Eva.Agent.Session.Entries do
 
     typedstruct do
       field :id, String.t(), enforce: true
-      field :parent_id, String.t() | nil
+      field :parent_id, String.t()
       field :timestamp, float()
       field :type, String.t(), default: "compaction"
       field :summary, String.t()
@@ -144,11 +122,11 @@ defmodule Eva.Agent.Session.Entries do
 
     typedstruct do
       field :id, String.t(), enforce: true
-      field :parent_id, String.t() | nil
+      field :parent_id, String.t()
       field :timestamp, float()
       field :type, String.t(), default: "branch_summary"
       field :summary, String.t()
-      field :branch_root_id, String.t() | nil
+      field :branch_root_id, String.t()
     end
 
     @spec new(map()) :: __MODULE__.t()
@@ -170,7 +148,7 @@ defmodule Eva.Agent.Session.Entries do
 
     typedstruct do
       field :id, String.t(), enforce: true
-      field :parent_id, String.t() | nil
+      field :parent_id, String.t()
       field :timestamp, float()
       field :type, String.t(), default: "label"
       field :label, String.t()
@@ -244,7 +222,7 @@ defmodule Eva.Agent.Session.Entries do
 
     typedstruct do
       field :id, String.t(), enforce: true
-      field :parent_id, String.t() | nil
+      field :parent_id, String.t()
       field :timestamp, float()
       field :type, String.t(), default: "custom"
       field :namespace, String.t()
@@ -332,14 +310,6 @@ defmodule Eva.Agent.Session.Entries do
         fields = json_map |> Utils.to_atom_keys() |> Map.put(:message, message)
         struct!(Message, fields)
 
-      "custom" ->
-        fields = json_map |> Utils.to_atom_keys() |> Map.update(:data, %{}, & &1)
-        struct!(Custom, fields)
-
-      "compaction" ->
-        fields = json_map |> Utils.to_atom_keys() |> Map.update(:replaces_entry_ids, [], & &1)
-        struct!(Compaction, fields)
-
       _ ->
         struct!(module_for(type), Utils.to_atom_keys(json_map))
     end
@@ -347,6 +317,8 @@ defmodule Eva.Agent.Session.Entries do
 
   def from_json_map(_), do: raise(ArgumentError, "missing 'type' field")
 
+  defp module_for("custom"), do: Custom
+  defp module_for("compaction"), do: Compaction
   defp module_for("model_change"), do: ModelChange
   defp module_for("thinking_level_change"), do: ThinkingLevelChange
   defp module_for("branch_summary"), do: BranchSummary

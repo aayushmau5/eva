@@ -266,25 +266,20 @@ defmodule Eva.Agent.Messages do
     end
   end
 
-  # defimpl JSON.Encoder, for: [UserMessage, AssistantMessage, ToolResultMessage] do
-  #   def encode(struct, opts) do
-  #     struct |> Map.from_struct() |> JSON.Encoder.encode(opts)
-  #   end
-  # end
-
-  # def from_json_map(%{"role" => "user"} = map) do
-  #   struct!(UserMessage, Utils.to_atom_keys(map))
-  # end
-
-  # def from_json_map(%{"role" => "assistant"} = map) do
-  #   tc = (map["tool_calls"] || []) |> Enum.map(&Tools.ToolCall.from_json_map/1)
-  #   fields = Utils.to_atom_keys(map) |> Map.put(:tool_calls, tc)
-  #   struct!(AssistantMessage, fields)
-  # end
-
-  # def from_json_map(%{"role" => "tool"} = map) do
-  #   struct!(ToolResultMessage, Utils.to_atom_keys(map))
-  # end
+  defimpl JSON.Encoder,
+    for: [
+      UserMessage,
+      AssistantMessage,
+      ToolResultMessage,
+      BashExecutionMessage,
+      CustomMessage,
+      BranchSummaryMessage,
+      CompactionSummaryMessage
+    ] do
+    def encode(struct, opts) do
+      struct |> Map.from_struct() |> JSON.Encoder.encode(opts)
+    end
+  end
 
   @doc "Return visible text from string or text/image content."
   @spec content_text(String.t() | [assistant_content()]) :: String.t()
@@ -297,5 +292,102 @@ defmodule Eva.Agent.Messages do
     end)
     |> Enum.reverse()
     |> IO.iodata_to_binary()
+  end
+
+  def from_json_map(%{"role" => role} = json_map) do
+    case role do
+      "user" ->
+        fields = Map.put(json_map, "content", convert_user_content(json_map["content"]))
+        struct!(UserMessage, Utils.to_atom_keys(fields))
+
+      "assistant" ->
+        fields =
+          json_map
+          |> Map.update(
+            "content",
+            [],
+            &Enum.map(&1, fn block -> convert_content_block(block) end)
+          )
+          |> Map.update("usage", nil, &convert_usage/1)
+          |> Map.update("diagnostics", nil, fn diags ->
+            Enum.map(diags, &convert_diagnostic/1)
+          end)
+
+        struct!(AssistantMessage, Utils.to_atom_keys(fields))
+
+      "tool_result" ->
+        fields =
+          Map.update(
+            json_map,
+            "content",
+            [],
+            &Enum.map(&1, fn block -> convert_content_block(block) end)
+          )
+
+        struct!(ToolResultMessage, Utils.to_atom_keys(fields))
+
+      "bash_execution" ->
+        struct!(BashExecutionMessage, Utils.to_atom_keys(json_map))
+
+      "custom" ->
+        fields = Map.update(json_map, "content", nil, &convert_user_content/1)
+        struct!(CustomMessage, Utils.to_atom_keys(fields))
+
+      "branch_summary" ->
+        struct!(BranchSummaryMessage, Utils.to_atom_keys(json_map))
+
+      "compaction_summary" ->
+        struct!(CompactionSummaryMessage, Utils.to_atom_keys(json_map))
+    end
+  end
+
+  defp convert_user_content(content) when is_binary(content), do: content
+
+  defp convert_user_content(nil), do: nil
+
+  defp convert_user_content(content) when is_map(content) do
+    convert_content_block(content)
+  end
+
+  defp convert_user_content(content) when is_list(content) do
+    Enum.map(content, fn block -> convert_content_block(block) end)
+  end
+
+  defp convert_content_block(%{"type" => "text"} = block) do
+    struct!(TextContent, Utils.to_atom_keys(block))
+  end
+
+  defp convert_content_block(%{"type" => "thinking"} = block) do
+    struct!(ThinkingContent, Utils.to_atom_keys(block))
+  end
+
+  defp convert_content_block(%{"type" => "tool_call"} = block) do
+    struct!(ToolCall, Utils.to_atom_keys(block))
+  end
+
+  defp convert_content_block(%{"type" => "image"} = block) do
+    struct!(ImageContent, Utils.to_atom_keys(block))
+  end
+
+  defp convert_usage(nil), do: nil
+
+  defp convert_usage(%{"cost" => cost} = usage) do
+    usage
+    |> Map.put("cost", struct!(UsageCost, Utils.to_atom_keys(cost)))
+    |> then(&struct!(Usage, Utils.to_atom_keys(&1)))
+  end
+
+  defp convert_usage(usage) do
+    struct!(Usage, Utils.to_atom_keys(usage))
+  end
+
+  defp convert_diagnostic(%{"error" => error} = diag) do
+    diag
+    |> Map.put("error", struct!(AssistantDiagnosticError, Utils.to_atom_keys(error)))
+    |> then(&struct!(AssistantMessageDiagnostic, Utils.to_atom_keys(&1)))
+  end
+
+  defp convert_diagnostic(diag) do
+    struct!(AssistantMessageDiagnostic, Utils.to_atom_keys(diag))
   end
 end
