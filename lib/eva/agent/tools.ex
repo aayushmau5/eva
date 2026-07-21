@@ -3,24 +3,6 @@ defmodule Eva.Agent.Tools do
   Provider-neutral tool definitions and tool execution results.
   """
 
-  defmodule ToolCall do
-    @moduledoc """
-    A request from the assistant to execute a named tool.
-    """
-    use TypedStruct
-    alias Eva.Agent.Utils
-
-    typedstruct do
-      field :id, String.t()
-      field :name, String.t()
-      field :arguments, map() | String.t()
-    end
-
-    def from_json_map(map) when is_map(map) do
-      struct!(__MODULE__, Utils.to_atom_keys(map))
-    end
-  end
-
   defmodule AgentToolResult do
     @moduledoc """
     Structured result returned by a tool execution.
@@ -77,11 +59,5 @@ defmodule Eva.Agent.Tools do
   @spec execute(AgentTool.t(), map()) :: AgentToolResult.t()
   def execute(%AgentTool{executor: executor}, arguments) do
     executor.(arguments)
-  end
-
-  defimpl JSON.Encoder, for: ToolCall do
-    def encode(struct, opts) do
-      struct |> Map.from_struct() |> JSON.Encoder.encode(opts)
-    end
   end
 end

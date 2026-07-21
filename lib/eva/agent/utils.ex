@@ -15,6 +15,10 @@ defmodule Eva.Agent.Utils do
     System.os_time(:millisecond) / 1000
   end
 
+  @doc "Return the current Unix timestamp in milliseconds."
+  @spec current_timestamp_ms() :: integer()
+  def current_timestamp_ms, do: System.system_time(:millisecond)
+
   @doc """
   Converts map string keys into (existing) atoms.
   """
