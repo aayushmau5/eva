@@ -1,17 +1,32 @@
 defmodule Eva.Agent.Harness do
   use GenServer
 
-  alias Eva.Agent.{Events, Loop, Messages}
+  alias Eva.Agent.{Events, Loop, Messages, Tools}
 
-  @loop_events Events.event_modules()
+  @event_modules [
+    Events.AgentStart,
+    Events.AgentEnd,
+    Events.TurnStart,
+    Events.TurnEnd,
+    Events.MessageStart,
+    Events.MessageUpdate,
+    Events.MessageEnd,
+    Events.ToolExecutionStart,
+    Events.ToolExecutionUpdate,
+    Events.ToolExecutionEnd
+  ]
 
   @type option ::
           {:provider_pid, pid()}
           | {:coding_session_pid, pid()}
-          | {:tools, [any()]}
+          | {:model, String.t()}
+          | {:system_prompt, String.t()}
+          | {:tools, [Tools.AgentTool.t()]}
           | {:max_turns, pos_integer() | nil}
           | {:messages, [Eva.Agent.Messages.t()]}
           | {:queue_mode, :one_at_a_time | :all}
+          | {:before_tool_call, Loop.before_tool_callback()}
+          | {:after_tool_call, Loop.after_tool_callback()}
           | {:name, atom()}
 
   @type options :: [option()]
@@ -24,7 +39,8 @@ defmodule Eva.Agent.Harness do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
-  @spec prompt(GenServer.server(), String.t()) :: {:ok, map()} | {:error, :already_running}
+  @spec prompt(GenServer.server(), Messages.agent_message()) ::
+          {:ok, map()} | {:error, :already_running}
   def prompt(pid \\ __MODULE__, prompt) do
     GenServer.call(pid, {:prompt, prompt})
   end
@@ -49,14 +65,14 @@ defmodule Eva.Agent.Harness do
     GenServer.call(pid, :running_status)
   end
 
-  @spec steer(GenServer.server(), String.t()) :: :ok
-  def steer(pid \\ __MODULE__, content) do
-    GenServer.call(pid, {:steer, content})
+  @spec steer(GenServer.server(), Messages.agent_message()) :: :ok
+  def steer(pid \\ __MODULE__, message) do
+    GenServer.call(pid, {:steer, message})
   end
 
-  @spec follow_up(GenServer.server(), String.t()) :: :ok
-  def follow_up(pid \\ __MODULE__, content) do
-    GenServer.call(pid, {:follow_up, content})
+  @spec follow_up(GenServer.server(), Messages.agent_message()) :: :ok
+  def follow_up(pid \\ __MODULE__, message) do
+    GenServer.call(pid, {:follow_up, message})
   end
 
   @spec cancel(GenServer.server()) :: :ok
@@ -89,6 +105,37 @@ defmodule Eva.Agent.Harness do
     GenServer.call(pid, :has_queued_messages?)
   end
 
+  @spec pop_latest_steering(GenServer.server()) :: Messages.agent_message() | nil
+  def pop_latest_steering(pid \\ __MODULE__) do
+    GenServer.call(pid, :pop_latest_steering)
+  end
+
+  @spec pop_latest_follow_up(GenServer.server()) :: Messages.agent_message() | nil
+  def pop_latest_follow_up(pid \\ __MODULE__) do
+    GenServer.call(pid, :pop_latest_follow_up)
+  end
+
+  @spec clear_queues(GenServer.server()) :: %{
+          steering: [Messages.agent_message()],
+          follow_up: [Messages.agent_message()]
+        }
+  def clear_queues(pid \\ __MODULE__) do
+    GenServer.call(pid, :clear_queues)
+  end
+
+  @spec pending_message_count(GenServer.server()) :: non_neg_integer()
+  def pending_message_count(pid \\ __MODULE__) do
+    GenServer.call(pid, :pending_message_count)
+  end
+
+  @spec queued_messages(GenServer.server()) :: %{
+          steering: [Messages.agent_message()],
+          follow_up: [Messages.agent_message()]
+        }
+  def queued_messages(pid \\ __MODULE__) do
+    GenServer.call(pid, :queued_messages)
+  end
+
   # -- GenServer --
 
   @impl true
@@ -99,6 +146,10 @@ defmodule Eva.Agent.Harness do
     max_turns = Keyword.get(opts, :max_turns)
     messages = Keyword.get(opts, :messages, [])
     queue_mode = Keyword.get(opts, :queue_mode, :one_at_a_time)
+    system_prompt = Keyword.get(opts, :system_prompt, "")
+    model = Keyword.get(opts, :model, "")
+    before_tool_call = Keyword.get(opts, :before_tool_call)
+    after_tool_call = Keyword.get(opts, :after_tool_call)
 
     # Loop crash gets trapped ({:EXIT, ...}) so this process doesn't go down with it.
     Process.flag(:trap_exit, true)
@@ -107,15 +158,18 @@ defmodule Eva.Agent.Harness do
      %{
        provider_pid: provider_pid,
        coding_session_pid: coding_session_pid,
+       system_prompt: system_prompt,
+       model: model,
        messages: messages,
        tools: tools,
        max_turns: max_turns,
        running?: false,
-       looper: nil,
+       agent_loop: nil,
        steering_queue: [],
        follow_up_queue: [],
        queue_mode: queue_mode,
-       pending_prompt_event: nil
+       before_tool_call: before_tool_call,
+       after_tool_call: after_tool_call
      }}
   end
 
@@ -125,10 +179,7 @@ defmodule Eva.Agent.Harness do
       {:reply, {:error, :already_running}, state}
     else
       state = repair_tool_calls(state)
-      prompt_user_message = %Messages.UserMessage{content: prompt}
-      messages = state.messages ++ [prompt_user_message]
-      state = %{state | messages: messages, pending_prompt_event: prompt_user_message}
-      state = run(state)
+      state = run([prompt], state)
       {:reply, {:ok, state}, state}
     end
   end
@@ -138,19 +189,17 @@ defmodule Eva.Agent.Harness do
       {:reply, {:error, :already_running}, state}
     else
       state = repair_tool_calls(state)
-      state = run(state)
+      state = run([], state)
       {:reply, {:ok, state}, state}
     end
   end
 
-  def handle_call({:steer, content}, _from, state) do
-    message = %Messages.UserMessage{content: content}
+  def handle_call({:steer, message}, _from, state) do
     state = %{state | steering_queue: state.steering_queue ++ [message]}
     {:reply, :ok, state}
   end
 
-  def handle_call({:follow_up, content}, _from, state) do
-    message = %Messages.UserMessage{content: content}
+  def handle_call({:follow_up, message}, _from, state) do
     state = %{state | follow_up_queue: state.follow_up_queue ++ [message]}
     {:reply, :ok, state}
   end
@@ -180,6 +229,33 @@ defmodule Eva.Agent.Harness do
 
   def handle_call(:has_queued_messages?, _from, state) do
     {:reply, state.steering_queue != [] or state.follow_up_queue != [], state}
+  end
+
+  def handle_call(:pop_latest_steering, _from, state) do
+    case state.steering_queue do
+      [] -> {:reply, nil, state}
+      queue -> {:reply, List.last(queue), %{state | steering_queue: Enum.drop(queue, -1)}}
+    end
+  end
+
+  def handle_call(:pop_latest_follow_up, _from, state) do
+    case state.follow_up_queue do
+      [] -> {:reply, nil, state}
+      queue -> {:reply, List.last(queue), %{state | follow_up_queue: Enum.drop(queue, -1)}}
+    end
+  end
+
+  def handle_call(:clear_queues, _from, state) do
+    snapshot = %{steering: state.steering_queue, follow_up: state.follow_up_queue}
+    {:reply, snapshot, %{state | steering_queue: [], follow_up_queue: []}}
+  end
+
+  def handle_call(:pending_message_count, _from, state) do
+    {:reply, length(state.steering_queue) + length(state.follow_up_queue), state}
+  end
+
+  def handle_call(:queued_messages, _from, state) do
+    {:reply, %{steering: state.steering_queue, follow_up: state.follow_up_queue}, state}
   end
 
   # Called by Loop
@@ -224,25 +300,7 @@ defmodule Eva.Agent.Harness do
     {:noreply, state}
   end
 
-  def handle_info(%Events.TurnStart{} = event, state) do
-    if state.coding_session_pid, do: send(state.coding_session_pid, event)
-
-    state =
-      if not is_nil(state.pending_prompt_event) and state.coding_session_pid do
-        # Message End event basically means user's prompt is now part of the transcript.
-        # So as soon as we get a Turn Start event, we send (additional) `MessageStart` and `MessageEnd` to signify that
-        # the message has been "committed"
-        send(state.coding_session_pid, %Events.MessageStart{message_role: "user"})
-        send(state.coding_session_pid, %Events.MessageEnd{message: state.pending_prompt_event})
-        %{state | pending_prompt_event: nil}
-      else
-        state
-      end
-
-    {:noreply, state}
-  end
-
-  def handle_info(%{__struct__: mod} = event, state) when mod in @loop_events do
+  def handle_info(%{__struct__: mod} = event, state) when mod in @event_modules do
     if state.coding_session_pid, do: send(state.coding_session_pid, event)
     {:noreply, state}
   end
@@ -253,7 +311,7 @@ defmodule Eva.Agent.Harness do
 
   # -- Private --
 
-  defp run(state) do
+  defp run(prompts, state) do
     harness_pid = self()
 
     pid =
@@ -261,9 +319,14 @@ defmodule Eva.Agent.Harness do
         Loop.run(
           provider_pid: state.provider_pid,
           harness_pid: harness_pid,
+          model: state.model,
+          system_prompt: state.system_prompt,
           messages: state.messages,
+          prompts: prompts,
           tools: state.tools,
-          max_turns: state.max_turns
+          max_turns: state.max_turns,
+          before_tool_call: state.before_tool_call,
+          after_tool_call: state.after_tool_call
         )
       end)
 
@@ -296,16 +359,15 @@ defmodule Eva.Agent.Harness do
     repaired =
       messages
       |> Enum.flat_map(fn
-        %Messages.AssistantMessage{tool_calls: tool_calls} when not is_nil(tool_calls) ->
-          tool_calls
+        %Messages.AssistantMessage{} = message ->
+          Messages.AssistantMessage.tool_calls(message)
           |> Enum.reject(&MapSet.member?(returned_ids, &1.id))
           |> Enum.map(fn tc ->
             %Messages.ToolResultMessage{
               tool_call_id: tc.id,
-              name: tc.name,
-              content: "Tool call interrupted by user",
-              ok: false,
-              error: "Tool call interrupted by user"
+              tool_name: tc.name,
+              content: %Messages.TextContent{text: "Tool call interrupted by user"},
+              is_error: true
             }
           end)
 
