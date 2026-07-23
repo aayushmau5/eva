@@ -9,7 +9,7 @@ defmodule Eva.Agent.Session.State do
   alias Eva.Agent.Session.{Entries, Tree}
 
   typedstruct do
-    field :messages, [Messages.t()]
+    field :messages, [Messages.agent_message()]
     field :model, String.t()
     field :thinking_level, String.t()
     field :label, String.t()

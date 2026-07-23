@@ -2,15 +2,15 @@ defmodule Eva.Coding.BranchSummary do
   @moduledoc """
   Model-assisted summaries for abandoned session-tree branches.
 
-  Spawns an LmStudio provider process and produces structured summaries
+  Spawns a provider process and produces structured summaries
   from a list of conversation messages.
   """
 
   use GenServer
 
   alias Eva.AI.Config, as: ProviderConfig
-  alias Eva.AI.Events
-  alias Eva.AI.LmStudio
+  alias Eva.AI.Events, as: AIEvents
+  alias Eva.AI.OpenAICompatibleProvider
   alias Eva.Agent.Messages
 
   @max_summary_source_message_chars 4_000
@@ -18,8 +18,9 @@ defmodule Eva.Coding.BranchSummary do
   @tool_result_max_chars 2_000
 
   @type opts :: %{
-          provider_config: ProviderConfig.t(),
-          messages: Messages.t(),
+          provider_config: ProviderConfig.OpenAICompatible.t(),
+          model: String.t(),
+          messages: [Messages.agent_message()],
           custom_instruction: String.t() | nil,
           replace_instruction: boolean()
         }
@@ -38,12 +39,14 @@ defmodule Eva.Coding.BranchSummary do
   @impl true
   def init(opts) do
     provider_config = Keyword.fetch!(opts, :provider_config)
+    model = Keyword.fetch!(opts, :model)
     messages = Keyword.fetch!(opts, :messages)
     custom_instructions = Keyword.get(opts, :custom_instructions)
     replace_instructions = Keyword.get(opts, :replace_instructions, false)
 
     state = %{
       provider_config: provider_config,
+      model: model,
       messages: messages,
       custom_instructions: custom_instructions,
       replace_instructions: replace_instructions
@@ -55,7 +58,10 @@ defmodule Eva.Coding.BranchSummary do
   @impl true
   def handle_continue(:provider, state) do
     {:ok, pid} =
-      LmStudio.start_link(name: :branch_summary_provider, system_prompt: system_prompt())
+      OpenAICompatibleProvider.start_link(
+        name: nil,
+        config: state.provider_config
+      )
 
     {:noreply, %{state | provider_pid: pid}}
   end
@@ -65,7 +71,7 @@ defmodule Eva.Coding.BranchSummary do
     if state.messages == [] do
       {:reply, {:error, "no messages to summarize"}, state}
     else
-      prompt =
+      content =
         branch_summary_prompt(
           state.messages,
           state.custom_instructions,
@@ -73,9 +79,15 @@ defmodule Eva.Coding.BranchSummary do
         )
 
       :ok =
-        LmStudio.run(state.provider_pid,
-          listener_pid: self(),
-          messages: [%Messages.UserMessage{content: prompt}]
+        OpenAICompatibleProvider.stream_response(
+          state.provider_pid,
+          %{
+            listener_pid: self(),
+            model: state.model,
+            system_prompt: system_prompt(),
+            messages: [%Messages.UserMessage{content: content}],
+            tools: []
+          }
         )
 
       result = receive_summary(state.messages)
@@ -87,6 +99,7 @@ defmodule Eva.Coding.BranchSummary do
 
   # Builds the full LLM prompt: serialized conversation wrapped in <conversation> tags
   # followed by the summary format instructions, optionally customized.
+  @spec branch_summary_prompt(Messages.agent_message(), String.t(), boolean()) :: String.t()
   defp branch_summary_prompt(messages, custom_instructions, replace_instructions) do
     conversation = serialize_branch_conversation(messages)
 
@@ -194,22 +207,40 @@ defmodule Eva.Coding.BranchSummary do
   # Dispatches on message type to produce a human-readable, role-prefixed line.
   defp format_summary_source_message(message) do
     case message do
-      %Messages.UserMessage{content: content} ->
-        "[User]: #{trim_summary_source_text(content)}"
+      %Messages.UserMessage{} ->
+        "[User]: #{trim_summary_source_text(Messages.UserMessage.text(message))}"
 
       %Messages.AssistantMessage{} ->
         format_assistant_summary_source(message)
 
-      %Messages.ToolResultMessage{name: name, ok: ok, content: content} ->
-        status = if ok, do: "ok", else: "failed"
-        trimmed = trim_summary_source_text(content, max_chars: @tool_result_max_chars)
-        "[Tool result: #{name} (#{status})]: #{trimmed}"
+      %Messages.ToolResultMessage{tool_name: tool_name, is_error: is_error} ->
+        status = if is_error, do: "failed", else: "ok"
+
+        trimmed =
+          trim_summary_source_text(Messages.ToolResultMessage.text(message),
+            max_chars: @tool_result_max_chars
+          )
+
+        "[Tool result: #{tool_name} (#{status})]: #{trimmed}"
+
+      %Messages.BranchSummaryMessage{role: role, summary: summary} ->
+        "[#{role}]: #{trim_summary_source_text(summary)}"
+
+      %Messages.CompactionSummaryMessage{role: role, summary: summary} ->
+        "[#{role}]: #{trim_summary_source_text(summary)}"
+
+      %Messages.BashExecutionMessage{} ->
+        "[#{message.role}]: #{trim_summary_source_text(message.output)}"
+
+      %Messages.CustomMessage{} ->
+        "[#{message.role}]: #{trim_summary_source_text(Messages.CustomMessage.text(message))}"
     end
   end
 
   # Formats an assistant message: its text content (if any) followed by tool calls.
   defp format_assistant_summary_source(message) do
-    %Messages.AssistantMessage{content: content, tool_calls: tool_calls} = message
+    content = Messages.AssistantMessage.text(message)
+    tool_calls = Messages.AssistantMessage.tool_calls(message)
     parts = []
 
     parts =
@@ -278,7 +309,8 @@ defmodule Eva.Coding.BranchSummary do
   # it with file-operation context before returning.
   defp receive_summary(messages) do
     case receive_summary_loop(nil) do
-      {:ok, content} ->
+      {:ok, message} ->
+        content = Messages.AssistantMessage.text(message)
         summary = String.trim(content)
 
         if summary == "" do
@@ -287,8 +319,8 @@ defmodule Eva.Coding.BranchSummary do
           {:ok, add_branch_summary_context(summary, messages)}
         end
 
-      {:error, _reason} = error ->
-        error
+      {:error, message} ->
+        {:error, Messages.AssistantMessage.text(message)}
     end
   end
 
@@ -296,20 +328,14 @@ defmodule Eva.Coding.BranchSummary do
   # ProviderResponseEnd, or an error on ProviderError / timeout.
   defp receive_summary_loop(_acc) do
     receive do
-      %Events.ProviderResponseStart{} ->
+      %AIEvents.AssistantDone{message: message} ->
+        {:ok, message}
+
+      %AIEvents.AssistantError{error: error} ->
+        {:error, error}
+
+      _ ->
         receive_summary_loop(nil)
-
-      %Events.ProviderTextDelta{} ->
-        receive_summary_loop(nil)
-
-      %Events.ProviderThinkingDelta{} ->
-        receive_summary_loop(nil)
-
-      %Events.ProviderResponseEnd{message: %Messages.AssistantMessage{content: content}} ->
-        {:ok, content}
-
-      %Events.ProviderError{message: reason} ->
-        {:error, reason}
     after
       60_000 ->
         {:error, "timed out waiting for branch summary"}
@@ -348,7 +374,9 @@ defmodule Eva.Coding.BranchSummary do
     {read, modified} =
       Enum.reduce(messages, {%{}, %{}}, fn message, {read_acc, mod_acc} ->
         case message do
-          %Messages.AssistantMessage{tool_calls: tool_calls} ->
+          %Messages.AssistantMessage{} ->
+            tool_calls = Messages.AssistantMessage.tool_calls(message)
+
             Enum.reduce(tool_calls, {read_acc, mod_acc}, fn call, {r_acc, m_acc} ->
               path = call.arguments["path"]
 
