@@ -133,25 +133,48 @@ defmodule Eva.Coding.ContextWindow do
   @doc """
   A rough token estimate for one provider-neutral message.
   """
-  @spec estimate_message_tokens(Messages.t()) :: non_neg_integer()
+  @spec estimate_message_tokens(Messages.agent_message()) :: non_neg_integer()
   def estimate_message_tokens(message) do
     case message.role do
       "user" ->
-        @message_overhead_tokens + estimate_text_tokens(message.content)
+        @message_overhead_tokens + estimate_text_tokens(Messages.UserMessage.text(message))
 
       "assistant" ->
+        tool_calls = Messages.AssistantMessage.tool_calls(message)
+        text = Messages.AssistantMessage.text(message)
+        thinking_text = Messages.AssistantMessage.thinking_text(message)
+
+        thinking_tokens = estimate_text_tokens(thinking_text)
+
         tool_call_tokens =
-          Enum.map(message.tool_calls, fn tc ->
+          Enum.map(tool_calls, fn tc ->
             estimate_text_tokens(tc.name) + estimate_text_tokens(JSON.encode!(tc.arguments))
           end)
           |> Enum.sum()
 
-        @message_overhead_tokens + estimate_text_tokens(message.content) + tool_call_tokens
-
-      "tool" ->
         @message_overhead_tokens +
-          estimate_text_tokens(message.name) +
-          estimate_text_tokens(message.content)
+          estimate_text_tokens(text) +
+          thinking_tokens +
+          tool_call_tokens
+
+      "tool_result" ->
+        @message_overhead_tokens +
+          estimate_text_tokens(message.tool_name) +
+          estimate_text_tokens(Messages.ToolResultMessage.text(message))
+
+      "bash_execution" ->
+        @message_overhead_tokens +
+          estimate_text_tokens(message.command) +
+          estimate_text_tokens(message.output)
+
+      "custom" ->
+        @message_overhead_tokens + estimate_text_tokens(Messages.CustomMessage.text(message))
+
+      "branch_summary" ->
+        @message_overhead_tokens + estimate_text_tokens(message.summary)
+
+      "compaction_summary" ->
+        @message_overhead_tokens + estimate_text_tokens(message.summary)
     end
   end
 
@@ -205,7 +228,8 @@ defmodule Eva.Coding.ContextWindow do
       message_texts =
         Enum.with_index(messages, 1)
         |> Enum.map(fn {message, i} ->
-          "#{i}. #{message.role}: #{message_text(message)}"
+          role = if message.role == "tool_result", do: "tool", else: message.role
+          "#{i}. #{role}: #{message_text(message)}"
         end)
         |> Enum.join("\n")
 
@@ -236,8 +260,8 @@ defmodule Eva.Coding.ContextWindow do
       end
 
     prompt =
-      if not is_nil(custom_instructions) and custom_instructions != "" do
-        prompt <> "\n\nAdditional instructions: #{custom_instructions}"
+      if not is_nil(custom_instructions) and String.trim(custom_instructions) != "" do
+        prompt <> "\n\nAdditional focus: #{String.trim(custom_instructions)}"
       else
         prompt
       end
@@ -248,24 +272,40 @@ defmodule Eva.Coding.ContextWindow do
   # - Private helpers -
 
   defp message_text(message) do
+    text = message_base_text(message)
+
     case message.role do
-      "user" ->
-        truncate_summary_text(message.content)
-
       "assistant" ->
-        suffix =
-          if length(message.tool_calls) > 0,
-            do:
-              Enum.map(message.tool_calls, & &1.name)
-              |> Enum.join(", ")
-              |> then(&" [tool calls: #{&1}]"),
-            else: ""
+        tool_calls = Messages.AssistantMessage.tool_calls(message)
 
-        truncate_summary_text(message.content <> suffix)
+        text =
+          if length(tool_calls) > 0 do
+            names = Enum.map(tool_calls, & &1.name) |> Enum.join(", ")
+            "#{text} [tool calls: #{names}]"
+          else
+            text
+          end
 
-      "tool" ->
-        prefix = "#{message.name} " <> if message.ok, do: "ok: ", else: "failed: "
-        truncate_summary_text(prefix <> message.content)
+        truncate_summary_text(text)
+
+      "tool_result" ->
+        status = if message.is_error, do: "failed", else: "ok"
+        truncate_summary_text("#{message.tool_name} #{status}: #{text}")
+
+      _ ->
+        truncate_summary_text(text)
+    end
+  end
+
+  defp message_base_text(message) do
+    case message.role do
+      "user" -> Messages.UserMessage.text(message)
+      "assistant" -> Messages.AssistantMessage.text(message)
+      "tool_result" -> Messages.ToolResultMessage.text(message)
+      "bash_execution" -> message.output
+      "custom" -> Messages.CustomMessage.text(message)
+      "branch_summary" -> message.summary
+      "compaction_summary" -> message.summary
     end
   end
 
@@ -287,10 +327,11 @@ defmodule Eva.Coding.ContextWindow do
       [first | rest] = messages
 
       if first.role != "user" or
-           not String.starts_with?(first.content, @compaction_summary_prefix) do
+           not String.starts_with?(Messages.UserMessage.text(first), @compaction_summary_prefix) do
         {nil, messages}
       else
-        {String.replace_prefix(first.content, @compaction_summary_prefix, ""), rest}
+        {String.replace_prefix(Messages.UserMessage.text(first), @compaction_summary_prefix, ""),
+         rest}
       end
     else
       {nil, messages}
@@ -307,17 +348,20 @@ defmodule Eva.Coding.ContextWindow do
         "user" ->
           [
             ~s(<message index=#{index} role=user>),
-            message.content,
+            Messages.UserMessage.text(message),
             "</message>"
           ]
 
         "assistant" ->
-          content_line = if message.content != "", do: [message.content], else: []
+          text = Messages.AssistantMessage.text(message)
+          content_line = if text != "", do: [text], else: []
+
+          tool_calls = Messages.AssistantMessage.tool_calls(message)
 
           tool_call_lines =
-            if length(message.tool_calls) > 0 do
+            if length(tool_calls) > 0 do
               calls =
-                Enum.map(message.tool_calls, fn tc ->
+                Enum.map(tool_calls, fn tc ->
                   "- #{tc.name}: #{JSON.encode!(tc.arguments)}"
                 end)
 
@@ -329,10 +373,38 @@ defmodule Eva.Coding.ContextWindow do
           [~s(<message index=#{index} role=assistant>)] ++
             content_line ++ tool_call_lines ++ ["</message>"]
 
-        "tool" ->
+        "tool_result" ->
           [
-            ~s(<message index=#{index} role=tool name=#{message.name} ok=#{message.ok}>),
-            message.content,
+            ~s(<message index=#{index} role=tool name=#{message.tool_name} error=#{message.is_error}>),
+            Messages.ToolResultMessage.text(message),
+            "</message>"
+          ]
+
+        "bash_execution" ->
+          [
+            ~s(<message index=#{index} role=bash_execution>),
+            message.output,
+            "</message>"
+          ]
+
+        "custom" ->
+          [
+            ~s(<message index=#{index} role=custom custom_type=#{message.custom_type}>),
+            Messages.CustomMessage.text(message),
+            "</message>"
+          ]
+
+        "branch_summary" ->
+          [
+            ~s(<message index=#{index} role=branch_summary>),
+            message.summary,
+            "</message>"
+          ]
+
+        "compaction_summary" ->
+          [
+            ~s(<message index=#{index} role=compaction_summary>),
+            message.summary,
             "</message>"
           ]
       end

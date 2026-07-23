@@ -1,4 +1,5 @@
 defmodule Eva.Coding.Tools do
+  alias Eva.Agent.Messages
   alias Eva.Agent.Tools
   alias Eva.Coding.Diff
   alias Eva.Coding.ShellExec
@@ -19,7 +20,7 @@ defmodule Eva.Coding.Tools do
       name: "read",
       description: """
       Read the contents of a file. Supports text files and images (jpg, png, gif, webp).
-      Images are returned as base64 metadata. For text files, output is truncated to #{@default_max_output_lines} line
+      Images are returned as base64 metadata. For text files, output is truncated to #{@default_max_output_lines} lines
       or #{@default_max_output_kb}KB (whichever is hit first). Use offset/limit for large files. When you need the
       full file, continue with offset until complete.
       """,
@@ -42,8 +43,8 @@ defmodule Eva.Coding.Tools do
         offset = optional_int_arg(arguments, "offset")
         limit = optional_int_arg(arguments, "limit")
 
-        if offset != nil and offset < 0, do: raise("offset must be atleast 0")
-        if limit != nil and limit < 1, do: raise("limit must be atleast 1")
+        if offset != nil and offset < 0, do: raise("offset must be at least 0")
+        if limit != nil and limit < 1, do: raise("limit must be at least 1")
         if not File.exists?(path), do: raise("File not found: #{path}")
         if File.dir?(path), do: raise("Path is a directory: #{path}")
 
@@ -53,11 +54,8 @@ defmodule Eva.Coding.Tools do
           data = File.read!(path)
 
           %Tools.AgentToolResult{
-            tool_call_id: "",
-            name: "read",
-            ok: true,
-            content: "Read image file [#{mime_type}]",
-            data: %{
+            content: %Messages.TextContent{text: "Read image file [#{mime_type}]"},
+            details: %{
               path: path,
               mime_type: mime_type,
               bytes: byte_size(data),
@@ -143,11 +141,8 @@ defmodule Eva.Coding.Tools do
             end
 
           %Tools.AgentToolResult{
-            tool_call_id: "",
-            name: "read",
-            ok: true,
-            content: output,
-            data: %{
+            content: %Messages.TextContent{text: output},
+            details: %{
               path: path,
               truncation: truncation
             }
@@ -157,7 +152,7 @@ defmodule Eva.Coding.Tools do
     }
   end
 
-  @spec read_tool(cwd :: String.t()) :: Tools.AgentTool.t()
+  @spec write_tool(cwd :: String.t()) :: Tools.AgentTool.t()
   def write_tool(cwd) do
     %Tools.AgentTool{
       name: "write",
@@ -183,17 +178,14 @@ defmodule Eva.Coding.Tools do
         File.write!(path, content)
 
         %Tools.AgentToolResult{
-          tool_call_id: "",
-          name: "write",
-          ok: true,
-          content: "Successfully wrote to #{path}.",
-          data: %{path: path, characters: String.length(content)}
+          content: %Messages.TextContent{text: "Successfully wrote to #{path}."},
+          details: %{path: path, characters: String.length(content)}
         }
       end
     }
   end
 
-  @spec read_tool(cwd :: String.t()) :: Tools.AgentTool.t()
+  @spec edit_tool(cwd :: String.t()) :: Tools.AgentTool.t()
   def edit_tool(cwd) do
     %Tools.AgentTool{
       name: "edit",
@@ -251,11 +243,10 @@ defmodule Eva.Coding.Tools do
         patch = Diff.unified_patch(Path.relative_to(path, cwd), base_content, new_content)
 
         %Tools.AgentToolResult{
-          tool_call_id: "",
-          name: "edit",
-          ok: true,
-          content: "Successfully replaced #{length(edits)} block(s) in #{path}.",
-          data: %{
+          content: %Messages.TextContent{
+            text: "Successfully replaced #{length(edits)} block(s) in #{path}."
+          },
+          details: %{
             path: path,
             edits: length(edits),
             diff: diff,
@@ -267,7 +258,7 @@ defmodule Eva.Coding.Tools do
     }
   end
 
-  @spec read_tool(cwd :: String.t()) :: Tools.AgentTool.t()
+  @spec bash_tool(cwd :: String.t()) :: Tools.AgentTool.t()
   def bash_tool(cwd) do
     %Tools.AgentTool{
       name: "bash",
@@ -346,19 +337,15 @@ defmodule Eva.Coding.Tools do
 
         output_text = if status, do: output_text <> "\n\n[#{status}]", else: output_text
 
-        ok? =
-          is_integer(exit_code) and
-            exit_code == 0 and
-            not result.timed_out and
-            not result.cancelled
+        # ok? =
+        #   is_integer(exit_code) and
+        #     exit_code == 0 and
+        #     not result.timed_out and
+        #     not result.cancelled
 
         %Tools.AgentToolResult{
-          tool_call_id: "",
-          name: "bash",
-          ok: ok?,
-          content: output_text,
-          error: if(ok?, do: nil, else: status),
-          data: %{
+          content: %Messages.TextContent{text: output_text},
+          details: %{
             "command" => command,
             "exit_code" => exit_code,
             "timed_out" => result.timed_out,
@@ -436,17 +423,30 @@ defmodule Eva.Coding.Tools do
   end
 
   defp prepare_edit_args(arguments) do
-    edits_values = Map.get(arguments, "edits")
+    arguments =
+      case Map.get(arguments, "edits") do
+        edits_values when is_binary(edits_values) ->
+          case JSON.decode(edits_values) do
+            {:ok, parsed} -> Map.put(arguments, "edits", parsed)
+            {:error, _} -> arguments
+          end
 
-    cond do
-      is_binary(edits_values) ->
-        case JSON.decode(edits_values) do
-          {:ok, parsed} -> Map.put(arguments, "edits", parsed)
-          {:error, _} -> arguments
-        end
+        _ ->
+          arguments
+      end
 
-      true ->
-        arguments
+    old_text = Map.get(arguments, "oldText")
+    new_text = Map.get(arguments, "newText")
+
+    if is_binary(old_text) and is_binary(new_text) do
+      existing = Map.get(arguments, "edits")
+      edit_list = if is_list(existing), do: existing, else: []
+
+      arguments
+      |> Map.put("edits", edit_list ++ [%{"oldText" => old_text, "newText" => new_text}])
+      |> Map.drop(["oldText", "newText"])
+    else
+      arguments
     end
   end
 
@@ -655,8 +655,23 @@ defmodule Eva.Coding.Tools do
 
   defp apply_edits(content, edits, path) do
     edits =
-      Enum.map(edits, fn edit ->
-        %{old_text: normalize_to_lf(edit.old_text), new_text: normalize_to_lf(edit.new_text)}
+      edits
+      |> Enum.with_index()
+      |> Enum.map(fn {edit, i} ->
+        old_text = edit.old_text
+        new_text = edit.new_text
+
+        if old_text == "" do
+          total = length(edits)
+
+          if total == 1 do
+            raise "oldText must not be empty in #{path}."
+          else
+            raise "edits[#{i}].oldText must not be empty in #{path}."
+          end
+        end
+
+        %{old_text: normalize_to_lf(old_text), new_text: normalize_to_lf(new_text)}
       end)
 
     matches =
@@ -717,9 +732,8 @@ defmodule Eva.Coding.Tools do
   end
 
   defp write_temp_output(output) do
-    path =
-      Path.join(System.tmp_dir!(), "eva_bash_output_#{System.system_time(:second)}.txt")
-
+    suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+    path = Path.join(System.tmp_dir!(), "eva_bash_output_#{suffix}.txt")
     File.write!(path, output)
     path
   end

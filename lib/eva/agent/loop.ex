@@ -321,10 +321,7 @@ defmodule Eva.Agent.Loop do
           if is_nil(tool) do
             {unknown_tool_result(tool_call), true}
           else
-            case execute_tool(tool, tool_call) do
-              %{ok: true} = result -> {result, false}
-              %{ok: false} = result -> {result, true}
-            end
+            execute_tool(tool, tool_call)
           end
 
         {:block, reason} ->
@@ -335,26 +332,21 @@ defmodule Eva.Agent.Loop do
   end
 
   defp execute_tool(%Tools.AgentTool{} = tool, %Messages.ToolCall{} = tool_call) do
-    Tools.execute(tool, tool_call.arguments)
-    |> Map.put(:tool_call_id, tool_call.id)
+    # TODO: think about passing an "update" function for updates that sends ToolExecutionUpdate event
+    {Tools.execute(tool, tool_call.arguments), false}
   rescue
     e ->
-      %Tools.AgentToolResult{
-        tool_call_id: tool_call.id,
-        name: tool_call.name,
-        ok: false,
-        content: Exception.message(e),
-        error: Exception.message(e)
+      {
+        %Tools.AgentToolResult{
+          content: %Messages.TextContent{text: Exception.message(e)}
+        },
+        true
       }
   end
 
   defp unknown_tool_result(tool_call) do
     %Tools.AgentToolResult{
-      tool_call_id: tool_call.id,
-      name: tool_call.name,
-      ok: false,
-      content: "Unknown tool: #{tool_call.name}",
-      error: "Unknown tool: #{tool_call.name}"
+      content: %Messages.TextContent{text: "Unknown tool: #{tool_call.name}"}
     }
   end
 
@@ -362,11 +354,7 @@ defmodule Eva.Agent.Loop do
     msg = reason || "Tool execution was blocked"
 
     %Tools.AgentToolResult{
-      tool_call_id: tool_call.id,
-      name: tool_call.name,
-      ok: false,
-      content: msg,
-      error: msg
+      content: %Messages.TextContent{text: msg}
     }
   end
 

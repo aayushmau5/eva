@@ -4,7 +4,8 @@ defmodule Eva.Coding.SessionName do
   """
 
   alias Eva.AI.Events, as: AIEvents
-  alias Eva.AI.LmStudio
+  alias Eva.AI.OpenAICompatibleProvider
+  alias Eva.AI.Config, as: ProviderConfig
 
   alias Eva.Agent.Messages
 
@@ -18,8 +19,11 @@ defmodule Eva.Coding.SessionName do
 
   This function must be spawned in a Task or separate process.
   """
-  @spec name_session(String.t(), String.t()) :: String.t() | nil
-  def name_session(first_message, model) do
+  @spec name_session(String.t(), %{
+          config: ProviderConfig.OpenAICompatibleConfig.t(),
+          model: String.t()
+        }) :: String.t() | nil
+  def name_session(first_message, opts) do
     prompt = """
     Create a concise session name for this first user message. Use at most four words.
 
@@ -31,13 +35,19 @@ defmodule Eva.Coding.SessionName do
     messages = [%Messages.UserMessage{content: prompt}]
 
     {:ok, provider_pid} =
-      LmStudio.start_link(
-        system_prompt: @session_name_system_prompt,
-        model: model,
-        name: nil
+      OpenAICompatibleProvider.start_link(
+        name: nil,
+        config: opts.config
       )
 
-    GenServer.cast(provider_pid, {:run, [listener_pid: self(), messages: messages, tools: []]})
+    :ok =
+      OpenAICompatibleProvider.stream_response(provider_pid, %{
+        listener_pid: self(),
+        model: opts.model,
+        system_prompt: @session_name_system_prompt,
+        messages: messages,
+        tools: []
+      })
 
     case collect_name_response(<<>>) do
       nil -> nil
@@ -64,23 +74,18 @@ defmodule Eva.Coding.SessionName do
 
   defp collect_name_response(acc) do
     receive do
-      %AIEvents.ProviderTextDelta{delta: d} ->
+      %AIEvents.TextDelta{delta: d} ->
         collect_name_response(<<acc::binary, d::binary>>)
 
-      %AIEvents.ProviderThinkingDelta{} ->
-        collect_name_response(acc)
+      %AIEvents.AssistantDone{message: message} ->
+        text = Messages.AssistantMessage.text(message)
+        if text != "", do: text, else: acc
 
-      %AIEvents.ProviderToolCall{} ->
-        collect_name_response(acc)
-
-      %AIEvents.ProviderResponseStart{} ->
-        collect_name_response(acc)
-
-      %AIEvents.ProviderResponseEnd{message: %Messages.AssistantMessage{content: c}} ->
-        if c != "", do: c, else: acc
-
-      %AIEvents.ProviderError{} ->
+      %AIEvents.AssistantError{} ->
         nil
+
+      _ ->
+        collect_name_response(acc)
     after
       15_000 ->
         nil

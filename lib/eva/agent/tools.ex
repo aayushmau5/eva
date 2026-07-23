@@ -3,6 +3,8 @@ defmodule Eva.Agent.Tools do
   Provider-neutral tool definitions and tool execution results.
   """
 
+  alias Eva.Agent.Messages
+
   defmodule AgentToolResult do
     @moduledoc """
     Structured result returned by a tool execution.
@@ -10,13 +12,10 @@ defmodule Eva.Agent.Tools do
     use TypedStruct
 
     typedstruct do
-      field :tool_call_id, String.t()
-      field :name, String.t()
-      field :ok, boolean(), default: true
-      field :content, String.t(), default: ""
-      field :data, map() | nil, default: nil
-      field :details, map() | nil, default: nil
-      field :error, String.t() | nil, default: nil
+      field :content, [Messages.TextContent.t() | Messages.ImageContent.t()], default: []
+      field :details, map()
+      field :added_tool_names, [String.t()]
+      field :terminate, boolean()
     end
   end
 
@@ -34,6 +33,7 @@ defmodule Eva.Agent.Tools do
       * `prompt_snippet` — optional text injected into the system prompt to guide
         the model on when to use this tool.
       * `prompt_guidelines` — additional guideline strings for the system prompt.
+      * `execution_mode` — whether the tool can be run in parallel or sequential
     """
     use TypedStruct
 
@@ -44,6 +44,7 @@ defmodule Eva.Agent.Tools do
       field :executor, function()
       field :prompt_snippet, String.t() | nil, default: nil
       field :prompt_guidelines, [String.t()], default: []
+      field :execution_mode, :sequential | :parallel, default: :parallel
     end
   end
 
