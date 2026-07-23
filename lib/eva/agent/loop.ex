@@ -304,7 +304,15 @@ defmodule Eva.Agent.Loop do
         is_error: is_error
       })
 
-      message = build_tool_result_message(result, is_error)
+      message = %Messages.ToolResultMessage{
+        tool_call_id: tool_call.id,
+        tool_name: tool_call.name,
+        content: result.content,
+        details: result.details,
+        added_tool_names: result.added_tool_names,
+        is_error: is_error
+      }
+
       send(ctx.harness_pid, %Events.MessageStart{message: message})
       send(ctx.harness_pid, %Events.MessageEnd{message: message})
 
@@ -350,7 +358,7 @@ defmodule Eva.Agent.Loop do
     }
   end
 
-  defp blocked_result(tool_call, reason) do
+  defp blocked_result(_tool_call, reason) do
     msg = reason || "Tool execution was blocked"
 
     %Tools.AgentToolResult{
@@ -371,31 +379,6 @@ defmodule Eva.Agent.Loop do
        do: hook.(tool_call, result, is_error)
 
   defp apply_after_hook(_tool_call, result, is_error, _ctx), do: {result, is_error}
-
-  # ── Tool result message ────────────────────────────────────────────────
-
-  defp build_tool_result_message(%Tools.AgentToolResult{} = result, is_error) do
-    %Messages.ToolResultMessage{
-      tool_call_id: result.tool_call_id,
-      tool_name: result.name,
-      content: build_result_content(result),
-      details: result.details,
-      is_error: is_error
-    }
-  end
-
-  defp build_result_content(%{content: ""} = result) when not is_nil(result.data) do
-    [%Messages.TextContent{text: inspect(result.data)}]
-  end
-
-  defp build_result_content(%{ok: false, content: c, error: e}) when not is_nil(e) do
-    text = if String.contains?(c, e), do: c, else: "#{c}\n\nError: #{e}"
-    [%Messages.TextContent{text: text}]
-  end
-
-  defp build_result_content(%{content: c}) do
-    [%Messages.TextContent{text: c}]
-  end
 
   # ── Helpers ────────────────────────────────────────────────────────────
 
