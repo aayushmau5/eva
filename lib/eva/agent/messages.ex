@@ -274,7 +274,14 @@ defmodule Eva.Agent.Messages do
       BashExecutionMessage,
       CustomMessage,
       BranchSummaryMessage,
-      CompactionSummaryMessage
+      CompactionSummaryMessage,
+      Usage,
+      UsageCost,
+      AssistantDiagnosticError,
+      AssistantMessageDiagnostic,
+      ThinkingContent,
+      TextContent,
+      ImageContent
     ] do
     def encode(struct, opts) do
       struct |> Map.from_struct() |> JSON.Encoder.encode(opts)

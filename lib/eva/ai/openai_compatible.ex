@@ -55,7 +55,7 @@ defmodule Eva.AI.OpenAICompatibleProvider do
     Finch.build(
       :post,
       state.config.base_url <> "/chat/completions",
-      [],
+      [{"content-type", "application/json"}],
       build_req_body(opts, state)
     )
     |> Finch.stream(

@@ -164,7 +164,7 @@ defmodule Eva.Agent.Harness do
        tools: tools,
        max_turns: max_turns,
        running?: false,
-       agent_loop: nil,
+       looper: nil,
        steering_queue: [],
        follow_up_queue: [],
        queue_mode: queue_mode,

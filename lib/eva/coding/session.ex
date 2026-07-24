@@ -5,7 +5,7 @@ defmodule Eva.Coding.Session do
   use GenServer
   use TypedStruct
 
-  alias Eva.AI.LmStudio
+  alias Eva.AI.OpenAICompatibleProvider
   alias Eva.AI.Config, as: ProviderConfig
 
   alias Eva.Agent.Session.{Storage, Entries}
@@ -21,7 +21,18 @@ defmodule Eva.Coding.Session do
   alias Eva.Coding.SessionName
   alias Eva.Coding.ProjectContext
 
-  @harness_events AgentEvents.event_modules()
+  @harness_events [
+    AgentEvents.AgentStart,
+    AgentEvents.AgentEnd,
+    AgentEvents.TurnStart,
+    AgentEvents.TurnEnd,
+    AgentEvents.MessageStart,
+    AgentEvents.MessageUpdate,
+    AgentEvents.MessageEnd,
+    AgentEvents.ToolExecutionStart,
+    AgentEvents.ToolExecutionUpdate,
+    AgentEvents.ToolExecutionEnd
+  ]
 
   # Config passed during init
   typedstruct module: SessionConfig do
@@ -35,7 +46,8 @@ defmodule Eva.Coding.Session do
     field :resource_paths, Eva.Coding.Resources.t()
     field :session_id, String.t()
     field :session_index_manager, SessionIndexManager.t()
-    field :provider_config, Eva.AI.Config.t()
+    field :model, String.t()
+    field :provider_config, ProviderConfig.OpenAICompatible.t()
     field :auto_compact_token_threshold, non_neg_integer(), default: 200_000
     field :auto_compact_enabled, boolean(), default: true
     field :defer_index?, boolean(), default: false
@@ -131,10 +143,10 @@ defmodule Eva.Coding.Session do
   def handle_continue(:setup, %__MODULE__{config: %SessionConfig{} = config} = state) do
     entries = Storage.read_all(config.storage)
 
-    pending_initial_entries = if length(entries) != 0, do: [], else: make_initial_entries(config)
+    pending_initial_entries = if entries != [], do: [], else: make_initial_entries(config)
 
     entries =
-      if length(entries) != 0, do: detach_missing_parents(entries), else: pending_initial_entries
+      if entries != [], do: detach_missing_parents(entries), else: pending_initial_entries
 
     latest_leaf = SessionState.latest_leaf_entry(entries)
 
@@ -165,25 +177,19 @@ defmodule Eva.Coding.Session do
           |> Eva.Coding.SystemPrompt.build(),
         else: config.system_prompt
 
-    %Eva.AI.Config{} = provider_config = config.provider_config
-    provider_config = %Eva.AI.Config{provider_config | system_prompt: system_prompt}
-
-    # TODO: since we only have one provider right now, we are not "refreshing" it against the entries
-    # We only know the user selected model after we read the messages(ModelChange). In that case, we need
-    # to read the user's selected model and thinking level and spawn up the correct provider process.
-    provider_pid =
-      spawn_provider(
-        reasoning_effort: provider_config.reasoning_effort,
-        system_prompt: provider_config.system_prompt,
-        model: "nvidia/nemotron-3-nano-4b"
-      )
+    provider_pid = spawn_provider(config: config.provider_config)
 
     harness_pid =
       spawn_harness(
         provider_pid: provider_pid,
         coding_session_pid: self(),
+        model: config.model,
+        system_prompt: system_prompt,
         tools: tools,
-        messages: session_state.messages
+        messages: session_state.messages,
+        # TODO: think about this
+        before_tool_call: fn _tool_call -> :proceed end,
+        after_tool_call: fn _tool_call, result, error -> {result, error} end
       )
 
     {:noreply,
@@ -199,7 +205,7 @@ defmodule Eva.Coding.Session do
          resource_diagnostics: resources.diagnostics,
          command_registry: [],
          pending_initial_entries: pending_initial_entries,
-         provider_config: provider_config
+         config: %SessionConfig{config | system_prompt: system_prompt}
      }}
   end
 
@@ -252,6 +258,7 @@ defmodule Eva.Coding.Session do
           {:reply, {:error, "Harness already running. No streaming_behaviour is set."}, state}
       end
     else
+      prompt = %Messages.UserMessage{content: prompt}
       {:ok, _harness_state} = Harness.prompt(state.harness_pid, prompt)
       state = persist_new_messages(state)
       {:reply, :ok, state}
@@ -310,8 +317,7 @@ defmodule Eva.Coding.Session do
   @spec make_initial_entries(config :: SessionConfig.t()) :: [Entries.t()]
   defp make_initial_entries(%SessionConfig{} = config) do
     info = Entries.SessionInfo.new(%{cwd: config.cwd})
-    initial_model = "nvidia/nemotron-3-nano-4b"
-    model = Entries.ModelChange.new(%{parent_id: info.id, model: initial_model})
+    model = Entries.ModelChange.new(%{parent_id: info.id, model: config.model})
 
     thinking_level =
       Entries.ThinkingLevelChange.new(%{
@@ -336,7 +342,7 @@ defmodule Eva.Coding.Session do
   end
 
   defp spawn_provider(opts) do
-    case LmStudio.start_link(opts) do
+    case OpenAICompatibleProvider.start_link(opts) do
       {:ok, pid} -> pid
       {:error, {:already_started, pid}} -> pid
       {:error, reason} -> raise reason

@@ -6,6 +6,7 @@ defmodule Mix.Tasks.Herd do
   use Mix.Task
 
   alias Eva.Agent.Events
+  alias Eva.Agent.Messages, as: AgentMessages
   alias Eva.Agent.Session.Storage
 
   alias Eva.Coding.SessionIndexManager
@@ -28,21 +29,28 @@ defmodule Mix.Tasks.Herd do
   defp run_prompt(prompt) do
     cwd = File.cwd!()
     index_manager = SessionIndexManager.new()
+    model = "nvidia/nemotron-3-nano-4b"
 
     session_index_entry =
       SessionIndexManager.prepare_index(index_manager, %{
         cwd: cwd,
-        model: "nvidia/nemotron-3-nano-4b",
+        model: model,
         provider_name: "lmstudio"
       })
 
     jsonl_storage = Storage.Jsonl.new(session_index_entry.session_path)
 
+    provider_config = %ProviderConfig.OpenAICompatible{
+      base_url: "http://localhost:1234/v1",
+      provider_name: "lmstudio"
+    }
+
     config = %SessionConfig{
       cwd: cwd,
       storage: jsonl_storage,
-      provider_config: %ProviderConfig{model: "", base_url: "", endpoint: ""},
-      listener_pid: self()
+      provider_config: provider_config,
+      listener_pid: self(),
+      model: model
     }
 
     {:ok, coding_session_pid} = CodingSession.start_link(%{config: config})
@@ -54,23 +62,32 @@ defmodule Mix.Tasks.Herd do
   end
 
   defp receive_stream do
+    receive_stream(%{text_len: 0, thinking_len: 0})
+  end
+
+  defp receive_stream(state) do
     receive do
-      %Events.MessageDelta{delta: d} ->
-        IO.write(d)
-        receive_stream()
+      %Events.MessageUpdate{message: msg} ->
+        text = AgentMessages.AssistantMessage.text(msg)
+        thinking = AgentMessages.AssistantMessage.thinking_text(msg)
 
-      %Events.ThinkingDelta{delta: d} ->
-        IO.write(d)
-        receive_stream()
+        text_delta = String.slice(text, state.text_len..-1//1)
+        thinking_delta = String.slice(thinking, state.thinking_len..-1//1)
 
-      %Events.AgentEnd{} ->
+        if text_delta != "", do: IO.write(text_delta)
+        if thinking_delta != "", do: IO.write(thinking_delta)
+
+        receive_stream(%{text_len: String.length(text), thinking_len: String.length(thinking)})
+
+      %Events.TurnEnd{} ->
+        IO.puts("")
+        receive_stream(%{text_len: 0, thinking_len: 0})
+
+      %Events.AgentEnd{messages: _messages} ->
         IO.puts("")
 
-      %Events.Error{message: msg} ->
-        IO.puts(:stderr, "\nError: #{msg}")
-
       _other ->
-        receive_stream()
+        receive_stream(state)
     end
   end
 end
