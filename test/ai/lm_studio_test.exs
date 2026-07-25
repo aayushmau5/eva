@@ -25,38 +25,46 @@ defmodule Eva.AI.LmStudioTest do
     @tag timeout: 30_000
 
     test "{:stream, opts} sends events in order" do
-      config = %OpenAICompatible{
-        base_url: lm_studio_url(),
-        api: "openai-completions",
-        provider_name: "lm-studio"
-      }
-
-      {:ok, pid} = OpenAICompatibleProvider.start_link(config: config, name: nil)
-
-      OpenAICompatibleProvider.stream_response(
-        pid,
-        %{
-          listener_pid: self(),
-          model: model_name(),
-          system_prompt: "",
-          messages: [%Agent.Messages.UserMessage{content: "What's the weather?"}],
-          tools: []
+      unless lm_studio_alive?() do
+        IO.puts(
+          :stderr,
+          "Skipping integration test: LM Studio not reachable at #{lm_studio_url()}"
+        )
+      else
+        config = %OpenAICompatible{
+          base_url: lm_studio_url(),
+          api: "openai-completions",
+          provider_name: "lm-studio"
         }
-      )
 
-      assert_receive %Events.AssistantStart{partial: partial}, 5000
-      assert is_binary(partial.model)
+        {:ok, pid} = OpenAICompatibleProvider.start_link(config: config, name: nil)
 
-      {deltas, end_event} = collect_events([])
+        OpenAICompatibleProvider.stream_response(
+          pid,
+          %{
+            listener_pid: self(),
+            model: model_name(),
+            system_prompt: "",
+            messages: [%Agent.Messages.UserMessage{content: "What's the weather?"}],
+            tools: []
+          }
+        )
 
-      assert %Events.AssistantDone{
-               message: %Agent.Messages.AssistantMessage{} = message,
-               reason: _finish_reason
-             } = end_event
+        assert_receive %Events.AssistantStart{partial: partial}, 5000
+        assert is_binary(partial.model)
 
-      assert Agent.Messages.AssistantMessage.text(message) == Enum.join(Enum.reverse(deltas), "")
+        {deltas, end_event} = collect_events([])
 
-      GenServer.stop(pid)
+        assert %Events.AssistantDone{
+                 message: %Agent.Messages.AssistantMessage{} = message,
+                 reason: _finish_reason
+               } = end_event
+
+        assert Agent.Messages.AssistantMessage.text(message) ==
+                 Enum.join(Enum.reverse(deltas), "")
+
+        GenServer.stop(pid)
+      end
     end
 
     defp collect_events(acc) do
@@ -79,6 +87,21 @@ defmodule Eva.AI.LmStudioTest do
   end
 
   defp lm_studio_url, do: Application.get_env(:eva, :lm_studio_url, "http://localhost:1234")
+
+  defp lm_studio_alive? do
+    uri = URI.parse(lm_studio_url())
+    host = uri.host |> String.to_charlist()
+    port = uri.port
+
+    case :gen_tcp.connect(host, port, [], 500) do
+      {:ok, sock} ->
+        :gen_tcp.close(sock)
+        true
+
+      {:error, _} ->
+        false
+    end
+  end
 
   defp model_name do
     Application.get_env(:eva, :lm_studio_model, "nvidia/nemotron-3-nano-4b")
