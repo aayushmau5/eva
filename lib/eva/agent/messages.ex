@@ -317,8 +317,9 @@ defmodule Eva.Agent.Messages do
             &Enum.map(&1, fn block -> convert_content_block(block) end)
           )
           |> Map.update("usage", nil, &convert_usage/1)
-          |> Map.update("diagnostics", nil, fn diags ->
-            Enum.map(diags, &convert_diagnostic/1)
+          |> Map.update("diagnostics", nil, fn
+            nil -> nil
+            diags -> Enum.map(diags, &convert_diagnostic/1)
           end)
 
         struct!(AssistantMessage, Utils.to_atom_keys(fields))

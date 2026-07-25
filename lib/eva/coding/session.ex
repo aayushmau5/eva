@@ -237,7 +237,7 @@ defmodule Eva.Coding.Session do
     index =
       SessionIndexManager.get_session(state.config.session_index_manager, state.config.session_id)
 
-    index.title
+    {:reply, index.title, state}
   end
 
   def handle_call({:prompt, prompt, streaming_behaviour}, _from, %__MODULE__{} = state) do
@@ -410,7 +410,7 @@ defmodule Eva.Coding.Session do
         Eva.Coding.SessionIndexManager.create_index(index_manager, %{
           session_id: state.config.session_id,
           cwd: state.config.cwd,
-          model: state.config.provider_config.model,
+          model: state.config.model,
           provider_name: provider_name(nil)
         })
       end
@@ -456,11 +456,12 @@ defmodule Eva.Coding.Session do
   defp try_auto_name_session(content, state) do
     if not state.auto_name_attempted and fresh_session?(state) do
       session_pid = self()
-      model = state.config.provider_config.model
+      model = state.config.model
 
       Task.start(fn ->
         title =
-          SessionName.name_session(content, model) || SessionName.sanitize_session_name(content)
+          SessionName.name_session(content, %{model: model, config: state.config.provider_config}) ||
+            SessionName.sanitize_session_name(content)
 
         send(session_pid, {:session_name, title})
       end)

@@ -175,6 +175,8 @@ defmodule Eva.Agent.Harness do
 
   @impl true
   def handle_call({:prompt, prompt}, _from, state) do
+    prompt = wrap_user_message(prompt)
+
     if state.running? do
       {:reply, {:error, :already_running}, state}
     else
@@ -195,11 +197,13 @@ defmodule Eva.Agent.Harness do
   end
 
   def handle_call({:steer, message}, _from, state) do
+    message = wrap_user_message(message)
     state = %{state | steering_queue: state.steering_queue ++ [message]}
     {:reply, :ok, state}
   end
 
   def handle_call({:follow_up, message}, _from, state) do
+    message = wrap_user_message(message)
     state = %{state | follow_up_queue: state.follow_up_queue ++ [message]}
     {:reply, :ok, state}
   end
@@ -310,6 +314,14 @@ defmodule Eva.Agent.Harness do
   end
 
   # -- Private --
+
+  defp wrap_user_message(%Messages.UserMessage{} = msg), do: msg
+
+  defp wrap_user_message(text) when is_binary(text) do
+    %Messages.UserMessage{content: text}
+  end
+
+  defp wrap_user_message(other), do: other
 
   defp run(prompts, state) do
     harness_pid = self()
