@@ -537,7 +537,7 @@ defmodule Eva.Agent.LoopTest do
 
   defp events_of(events, struct), do: Enum.filter(events, &match?(%^struct{}, &1))
 
-  defp lm_studio_url, do: Application.get_env(:eva, :lm_studio_url, "http://localhost:1234")
+  defp lm_studio_url, do: Application.get_env(:eva, :lm_studio_url, "http://localhost:1234/v1")
 
   defp lm_studio_alive? do
     uri = URI.parse(lm_studio_url())

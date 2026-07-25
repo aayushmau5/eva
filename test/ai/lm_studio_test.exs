@@ -7,7 +7,7 @@ defmodule Eva.AI.LmStudioTest do
   describe "GenServer lifecycle" do
     test "starts with default config" do
       config = %OpenAICompatible{
-        base_url: "http://localhost:1234",
+        base_url: "http://localhost:1234/v1",
         api: "openai-completions",
         provider_name: "lm-studio"
       }
@@ -60,7 +60,8 @@ defmodule Eva.AI.LmStudioTest do
                  reason: _finish_reason
                } = end_event
 
-        assert Agent.Messages.AssistantMessage.text(message) ==
+        assert Agent.Messages.AssistantMessage.thinking_text(message) <>
+                 Agent.Messages.AssistantMessage.text(message) ==
                  Enum.join(Enum.reverse(deltas), "")
 
         GenServer.stop(pid)
@@ -86,7 +87,7 @@ defmodule Eva.AI.LmStudioTest do
     end
   end
 
-  defp lm_studio_url, do: Application.get_env(:eva, :lm_studio_url, "http://localhost:1234")
+  defp lm_studio_url, do: Application.get_env(:eva, :lm_studio_url, "http://localhost:1234/v1")
 
   defp lm_studio_alive? do
     uri = URI.parse(lm_studio_url())

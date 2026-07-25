@@ -77,15 +77,22 @@ defmodule Eva.Coding.SessionName do
       %AIEvents.TextDelta{delta: d} ->
         collect_name_response(<<acc::binary, d::binary>>)
 
+      %AIEvents.ThinkingDelta{delta: d} ->
+        collect_name_response(<<acc::binary, d::binary>>)
+
       %AIEvents.AssistantDone{message: message} ->
         text = Messages.AssistantMessage.text(message)
-        if text != "", do: text, else: acc
+        thinking = Messages.AssistantMessage.thinking_text(message)
+
+        cond do
+          text != "" -> text
+          thinking != "" -> thinking
+          acc != <<>> -> acc
+          true -> nil
+        end
 
       %AIEvents.AssistantError{} ->
         nil
-
-      _ ->
-        collect_name_response(acc)
     after
       15_000 ->
         nil

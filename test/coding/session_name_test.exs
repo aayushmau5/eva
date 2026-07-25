@@ -4,7 +4,7 @@ defmodule Eva.Coding.SessionNameTest do
   alias Eva.Coding.SessionName
   alias Eva.AI.Config.OpenAICompatible
 
-  @lm_studio_url Application.compile_env(:eva, :lm_studio_url, "http://localhost:1234")
+  @lm_studio_url Application.compile_env(:eva, :lm_studio_url, "http://localhost:1234/v1")
   @nemotron_model "nvidia/nemotron-3-nano-4b"
 
   defp name_opts do
