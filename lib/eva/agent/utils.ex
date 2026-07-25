@@ -27,6 +27,24 @@ defmodule Eva.Agent.Utils do
     Map.new(map, fn {k, v} -> {String.to_existing_atom(k), v} end)
   end
 
+  @doc """
+  Builds a struct from a decoded JSON map with string keys.
+  """
+  @spec to_struct(module(), map()) :: struct()
+  def to_struct(module, json_map) when is_map(json_map) do
+    empty = module.__struct__()
+
+    empty
+    |> Map.from_struct()
+    |> Map.keys()
+    |> Enum.reduce(empty, fn field, acc ->
+      case Map.fetch(json_map, Atom.to_string(field)) do
+        {:ok, value} -> Map.put(acc, field, value)
+        :error -> acc
+      end
+    end)
+  end
+
   @typep metadata_map :: %{String.t() => String.t()}
 
   @doc """

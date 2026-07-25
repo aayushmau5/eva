@@ -223,7 +223,7 @@ defmodule Eva.Coding.ToolsTest do
       new_content = "new content\n"
       tool = CodingTools.write_tool(tmp)
 
-      result = tool.executor.(%{"path" => path, "content" => new_content})
+      _result = tool.executor.(%{"path" => path, "content" => new_content})
 
       assert File.read!(path) == new_content
     end
@@ -233,7 +233,7 @@ defmodule Eva.Coding.ToolsTest do
       content = "deep content"
       tool = CodingTools.write_tool(tmp)
 
-      result = tool.executor.(%{"path" => path, "content" => content})
+      _result = tool.executor.(%{"path" => path, "content" => content})
 
       assert File.exists?(path)
       assert File.read!(path) == content
@@ -424,7 +424,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
       edits_json = JSON.encode!([%{"oldText" => "beta", "newText" => "BETA"}])
 
-      result =
+      _result =
         tool.executor.(%{
           "path" => path,
           "edits" => edits_json

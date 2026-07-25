@@ -385,4 +385,48 @@ defmodule Eva.Coding.SessionIndexManagerTest do
       assert is_binary(entry.id) and byte_size(entry.id) > 0
     end
   end
+
+  describe "delete_session/2" do
+    test "removes the entry and its transcript, leaving other sessions alone", %{tmp: tmp} do
+      manager = new_manager(tmp)
+      cwd = Path.join(tmp, "project")
+
+      kept = Manager.create_index(manager, %{cwd: cwd, model: "gpt-4"})
+      doomed = Manager.create_index(manager, %{cwd: cwd, model: "gpt-4"})
+      File.write!(kept.session_path, "{}\n")
+      File.write!(doomed.session_path, "{}\n")
+
+      assert Manager.delete_session(manager, doomed.id) == :ok
+
+      assert Manager.get_session(manager, doomed.id) == nil
+      refute File.exists?(doomed.session_path)
+
+      assert %SessionIndexEntry{} = Manager.get_session(manager, kept.id)
+      assert File.exists?(kept.session_path)
+    end
+
+    test "succeeds when the transcript was never written", %{tmp: tmp} do
+      manager = new_manager(tmp)
+      entry = Manager.create_index(manager, %{cwd: Path.join(tmp, "empty"), model: "gpt-4"})
+
+      refute File.exists?(entry.session_path)
+      assert Manager.delete_session(manager, entry.id) == :ok
+      assert Manager.get_session(manager, entry.id) == nil
+    end
+
+    test "removes the index file once the last session goes", %{tmp: tmp} do
+      manager = new_manager(tmp)
+      cwd = Path.join(tmp, "only-one")
+      entry = Manager.create_index(manager, %{cwd: cwd, model: "gpt-4"})
+
+      assert Manager.delete_session(manager, entry.id) == :ok
+
+      refute File.exists?(Paths.index_path(manager.paths, cwd))
+      assert Manager.list_sessions(manager, cwd) == []
+    end
+
+    test "reports an unknown session" do
+      assert Manager.delete_session(new_manager(@tmp_root), "nope") == {:error, :not_found}
+    end
+  end
 end

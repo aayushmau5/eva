@@ -307,11 +307,11 @@ defmodule Eva.Agent.Session.Entries do
     case type do
       "message" ->
         message = Messages.from_json_map(json_map["message"])
-        fields = json_map |> Utils.to_atom_keys() |> Map.put(:message, message)
-        struct!(Message, fields)
+        %Message{} = entry = Utils.to_struct(Message, json_map)
+        %Message{entry | message: message}
 
       _ ->
-        struct!(module_for(type), Utils.to_atom_keys(json_map))
+        Utils.to_struct(module_for(type), json_map)
     end
   end
 

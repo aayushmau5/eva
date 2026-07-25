@@ -23,7 +23,7 @@ defmodule Eva.AI.OpenAICompatibleProviderTest do
     )
   end
 
-  defp start_provider(config_overrides \\ []) do
+  defp start_provider(config_overrides) do
     {:ok, server} = SseServer.start_link()
     config = build_config(server, config_overrides)
     {:ok, pid} = OpenAICompatibleProvider.start_link(config: config, name: nil)

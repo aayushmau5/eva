@@ -140,6 +140,34 @@ defmodule Eva.Coding.SessionIndexManager do
     )
   end
 
+  @doc """
+  Removes a session from its project index and deletes its transcript.
+
+  This is not recoverable: the conversation is gone once the `.jsonl` is unlinked.
+  """
+  @spec delete_session(t(), session_id :: String.t()) :: :ok | {:error, :not_found}
+  def delete_session(%__MODULE__{} = manager, session_id) do
+    case get_session(manager, session_id) do
+      nil ->
+        {:error, :not_found}
+
+      %SessionIndexEntry{} = entry ->
+        path = EvaPaths.index_path(manager.paths, entry.cwd)
+
+        case read_project_index(manager, entry.cwd) |> Enum.reject(&(&1.id == entry.id)) do
+          [] -> File.rm(path)
+          remaining -> write_index!(path, remaining)
+        end
+
+        # An already-missing transcript is the same outcome the caller asked for.
+        case File.rm(entry.session_path) do
+          :ok -> :ok
+          {:error, :enoent} -> :ok
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  end
+
   @spec index_session!(t(), entry :: SessionIndexEntry.t()) :: :ok
   def index_session!(%__MODULE__{} = manager, %SessionIndexEntry{} = entry) do
     path = EvaPaths.index_path(manager.paths, entry.cwd)
@@ -174,7 +202,7 @@ defmodule Eva.Coding.SessionIndexManager do
 
         if String.length(trimmed) != 0 do
           record = JSON.decode!(trimmed)
-          index_entry = struct!(SessionIndexEntry, Utils.to_atom_keys(record))
+          index_entry = Utils.to_struct(SessionIndexEntry, record)
           [index_entry | records]
         else
           records
