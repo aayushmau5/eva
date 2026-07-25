@@ -5,8 +5,8 @@ defmodule Mix.Tasks.Herd do
 
   use Mix.Task
 
+  alias Eva.AI.Events, as: AIEvents
   alias Eva.Agent.Events
-  alias Eva.Agent.Messages, as: AgentMessages
   alias Eva.Agent.Session.Storage
 
   alias Eva.Coding.SessionIndexManager
@@ -62,32 +62,24 @@ defmodule Mix.Tasks.Herd do
   end
 
   defp receive_stream do
-    receive_stream(%{text_len: 0, thinking_len: 0})
-  end
-
-  defp receive_stream(state) do
     receive do
-      %Events.MessageUpdate{message: msg} ->
-        text = AgentMessages.AssistantMessage.text(msg)
-        thinking = AgentMessages.AssistantMessage.thinking_text(msg)
+      %Events.MessageUpdate{assistant_message_event: %AIEvents.TextDelta{delta: d}} ->
+        IO.write(d)
+        receive_stream()
 
-        text_delta = String.slice(text, state.text_len..-1//1)
-        thinking_delta = String.slice(thinking, state.thinking_len..-1//1)
-
-        if text_delta != "", do: IO.write(text_delta)
-        if thinking_delta != "", do: IO.write(thinking_delta)
-
-        receive_stream(%{text_len: String.length(text), thinking_len: String.length(thinking)})
+      %Events.MessageUpdate{assistant_message_event: %AIEvents.ThinkingDelta{delta: d}} ->
+        IO.write([IO.ANSI.light_green(), IO.ANSI.italic(), d, IO.ANSI.reset()])
+        receive_stream()
 
       %Events.TurnEnd{} ->
         IO.puts("")
-        receive_stream(%{text_len: 0, thinking_len: 0})
+        receive_stream()
 
       %Events.AgentEnd{messages: _messages} ->
         IO.puts("")
 
       _other ->
-        receive_stream(state)
+        receive_stream()
     end
   end
 end

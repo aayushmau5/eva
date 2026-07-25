@@ -219,16 +219,8 @@ defmodule Eva.Agent.Loop do
 
   defp collect_response(ctx) do
     receive do
-      %AIEvents.AgentStart{partial: partial} ->
+      %AIEvents.AssistantStart{partial: partial} ->
         send(ctx.harness_pid, %Events.MessageStart{message: partial})
-        collect_response(ctx)
-
-      %AIEvents.TextDelta{partial: partial} ->
-        send(ctx.harness_pid, %Events.MessageUpdate{message: partial})
-        collect_response(ctx)
-
-      %AIEvents.ThinkingDelta{partial: partial} ->
-        send(ctx.harness_pid, %Events.MessageUpdate{message: partial})
         collect_response(ctx)
 
       %AIEvents.AssistantDone{message: message} ->
@@ -239,32 +231,12 @@ defmodule Eva.Agent.Loop do
         send(ctx.harness_pid, %Events.MessageEnd{message: error})
         {:ok, error}
 
-      %AIEvents.TextStart{partial: partial} ->
-        send(ctx.harness_pid, %Events.MessageUpdate{message: partial})
-        collect_response(ctx)
+      event ->
+        send(ctx.harness_pid, %Events.MessageUpdate{
+          message: Map.get(event, :partial),
+          assistant_message_event: event
+        })
 
-      %AIEvents.TextEnd{partial: partial} ->
-        send(ctx.harness_pid, %Events.MessageUpdate{message: partial})
-        collect_response(ctx)
-
-      %AIEvents.ThinkingStart{partial: partial} ->
-        send(ctx.harness_pid, %Events.MessageUpdate{message: partial})
-        collect_response(ctx)
-
-      %AIEvents.ThinkingEnd{partial: partial} ->
-        send(ctx.harness_pid, %Events.MessageUpdate{message: partial})
-        collect_response(ctx)
-
-      %AIEvents.ToolCallStart{partial: partial} ->
-        send(ctx.harness_pid, %Events.MessageUpdate{message: partial})
-        collect_response(ctx)
-
-      %AIEvents.ToolCallDelta{partial: partial} ->
-        send(ctx.harness_pid, %Events.MessageUpdate{message: partial})
-        collect_response(ctx)
-
-      %AIEvents.ToolCallEnd{partial: partial} ->
-        send(ctx.harness_pid, %Events.MessageUpdate{message: partial})
         collect_response(ctx)
     after
       ctx.stream_timeout ->
@@ -346,7 +318,7 @@ defmodule Eva.Agent.Loop do
     e ->
       {
         %Tools.AgentToolResult{
-          content: %Messages.TextContent{text: Exception.message(e)}
+          content: [%Messages.TextContent{text: Exception.message(e)}]
         },
         true
       }
@@ -354,7 +326,7 @@ defmodule Eva.Agent.Loop do
 
   defp unknown_tool_result(tool_call) do
     %Tools.AgentToolResult{
-      content: %Messages.TextContent{text: "Unknown tool: #{tool_call.name}"}
+      content: [%Messages.TextContent{text: "Unknown tool: #{tool_call.name}"}]
     }
   end
 
@@ -362,7 +334,7 @@ defmodule Eva.Agent.Loop do
     msg = reason || "Tool execution was blocked"
 
     %Tools.AgentToolResult{
-      content: %Messages.TextContent{text: msg}
+      content: [%Messages.TextContent{text: msg}]
     }
   end
 

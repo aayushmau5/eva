@@ -281,7 +281,8 @@ defmodule Eva.Agent.Messages do
       AssistantMessageDiagnostic,
       ThinkingContent,
       TextContent,
-      ImageContent
+      ImageContent,
+      ToolCall
     ] do
     def encode(struct, opts) do
       struct |> Map.from_struct() |> JSON.Encoder.encode(opts)

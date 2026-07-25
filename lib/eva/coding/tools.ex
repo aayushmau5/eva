@@ -54,7 +54,7 @@ defmodule Eva.Coding.Tools do
           data = File.read!(path)
 
           %Tools.AgentToolResult{
-            content: %Messages.TextContent{text: "Read image file [#{mime_type}]"},
+            content: [%Messages.TextContent{text: "Read image file [#{mime_type}]"}],
             details: %{
               path: path,
               mime_type: mime_type,
@@ -141,7 +141,7 @@ defmodule Eva.Coding.Tools do
             end
 
           %Tools.AgentToolResult{
-            content: %Messages.TextContent{text: output},
+            content: [%Messages.TextContent{text: output}],
             details: %{
               path: path,
               truncation: truncation
@@ -178,7 +178,7 @@ defmodule Eva.Coding.Tools do
         File.write!(path, content)
 
         %Tools.AgentToolResult{
-          content: %Messages.TextContent{text: "Successfully wrote to #{path}."},
+          content: [%Messages.TextContent{text: "Successfully wrote to #{path}."}],
           details: %{path: path, characters: String.length(content)}
         }
       end
@@ -243,9 +243,11 @@ defmodule Eva.Coding.Tools do
         patch = Diff.unified_patch(Path.relative_to(path, cwd), base_content, new_content)
 
         %Tools.AgentToolResult{
-          content: %Messages.TextContent{
-            text: "Successfully replaced #{length(edits)} block(s) in #{path}."
-          },
+          content: [
+            %Messages.TextContent{
+              text: "Successfully replaced #{length(edits)} block(s) in #{path}."
+            }
+          ],
           details: %{
             path: path,
             edits: length(edits),
@@ -344,7 +346,7 @@ defmodule Eva.Coding.Tools do
         #     not result.cancelled
 
         %Tools.AgentToolResult{
-          content: %Messages.TextContent{text: output_text},
+          content: [%Messages.TextContent{text: output_text}],
           details: %{
             "command" => command,
             "exit_code" => exit_code,

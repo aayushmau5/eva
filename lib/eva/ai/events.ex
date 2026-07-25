@@ -7,7 +7,7 @@ defmodule Eva.AI.Events do
   alias Eva.Agent.Messages
 
   @type t ::
-          AgentStart.t()
+          AssistantStart.t()
           | TextStart.t()
           | TextDelta.t()
           | TextEnd.t()
@@ -23,7 +23,7 @@ defmodule Eva.AI.Events do
   @type done_reason :: :stop | :length | :tool_use
   @type error_reason :: :aborted | :error
 
-  typedstruct module: AgentStart do
+  typedstruct module: AssistantStart do
     field :type, String.t(), default: "start"
     field :partial, Messages.AssistantMessage.t()
   end

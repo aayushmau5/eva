@@ -113,13 +113,13 @@ defmodule Eva.AI.OpenAICompatibleProvider do
     %{acc | partial: partial}
   end
 
-  # Emit `AgentStart` once, on first content. Deferring it keeps the sequence
+  # Emit `AssistantStart` once, on first content. Deferring it keeps the sequence
   # honest if the stream dies before any content lands.
   defp start_assistant(acc, pid) do
     if acc.started do
       acc
     else
-      send(pid, %Events.AgentStart{partial: acc.partial})
+      send(pid, %Events.AssistantStart{partial: acc.partial})
       %{acc | started: true}
     end
   end
@@ -130,7 +130,7 @@ defmodule Eva.AI.OpenAICompatibleProvider do
     if acc.active_kind == kind do
       {acc, acc.active_index}
     else
-      # Set started: true if not done already(fires up an AgentStart event)
+      # Set started: true if not done already(fires up an Assistantstart event)
       acc = start_assistant(acc, pid)
 
       # If we are already in a block(like :text or :thinking), close it(which fires up an TextEnd or ThinkingEnd event)

@@ -366,7 +366,7 @@ defmodule Eva.Agent.Harness do
             %Messages.ToolResultMessage{
               tool_call_id: tc.id,
               tool_name: tc.name,
-              content: %Messages.TextContent{text: "Tool call interrupted by user"},
+              content: [%Messages.TextContent{text: "Tool call interrupted by user"}],
               is_error: true
             }
           end)
