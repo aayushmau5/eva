@@ -5,13 +5,30 @@ defmodule Eva.Agent.HarnessTest do
   alias Eva.AI.Events, as: AIEvents
   alias Eva.Test.MockProvider
 
-  defp stream_start, do: %AIEvents.ProviderResponseStart{model: "test"}
+  defp stream_start do
+    %AIEvents.AssistantStart{
+      partial: %Messages.AssistantMessage{model: "test"}
+    }
+  end
 
-  defp text_delta(text), do: %AIEvents.ProviderTextDelta{delta: text}
+  defp text_delta(text) do
+    %AIEvents.TextDelta{
+      content_index: 0,
+      delta: text,
+      partial: %Messages.AssistantMessage{
+        model: "test",
+        content: [%Messages.TextContent{text: text}]
+      }
+    }
+  end
 
   defp response_end(content) do
-    %AIEvents.ProviderResponseEnd{
-      message: %Messages.AssistantMessage{content: content, tool_calls: []}
+    %AIEvents.AssistantDone{
+      reason: :stop,
+      message: %Messages.AssistantMessage{
+        model: "test",
+        content: [%Messages.TextContent{text: content}]
+      }
     }
   end
 
@@ -26,10 +43,7 @@ defmodule Eva.Agent.HarnessTest do
       },
       executor: fn args ->
         %Tools.AgentToolResult{
-          tool_call_id: "",
-          name: "echo",
-          ok: true,
-          content: "echo: #{args["msg"]}"
+          content: [%Messages.TextContent{text: "echo: #{args["msg"]}"}]
         }
       end
     }
@@ -66,8 +80,10 @@ defmodule Eva.Agent.HarnessTest do
       refute final.running?
       assert is_nil(final.looper)
 
-      assert [%Messages.UserMessage{content: "hi"}, %Messages.AssistantMessage{content: "hello"}] =
+      assert [%Messages.UserMessage{content: "hi"}, %Messages.AssistantMessage{} = assistant] =
                final.messages
+
+      assert Messages.AssistantMessage.text(assistant) == "hello"
     end
 
     test "returns error when already running" do
@@ -316,11 +332,11 @@ defmodule Eva.Agent.HarnessTest do
 
   describe "tool call repair" do
     test "synthesizes missing tool results before prompt" do
-      tool_call = %Tools.ToolCall{id: "missing_1", name: "echo", arguments: %{}}
+      tool_call = %Messages.ToolCall{id: "missing_1", name: "echo", arguments: %{}}
 
       dangling = [
         %Messages.UserMessage{content: "do something"},
-        %Messages.AssistantMessage{content: "on it", tool_calls: [tool_call]}
+        %Messages.AssistantMessage{content: [tool_call]}
       ]
 
       {:ok, provider} = MockProvider.start_link(basic_turn())
@@ -336,20 +352,20 @@ defmodule Eva.Agent.HarnessTest do
 
       assert length(repaired) == 1
       assert hd(repaired).tool_call_id == "missing_1"
-      assert hd(repaired).ok == false
+      assert hd(repaired).is_error == true
     end
 
     test "no-op when all tool calls have results" do
-      tool_call = %Tools.ToolCall{id: "done_1", name: "echo", arguments: %{}}
+      tool_call = %Messages.ToolCall{id: "done_1", name: "echo", arguments: %{}}
 
       clean = [
         %Messages.UserMessage{content: "do something"},
-        %Messages.AssistantMessage{content: "on it", tool_calls: [tool_call]},
+        %Messages.AssistantMessage{content: [tool_call]},
         %Messages.ToolResultMessage{
           tool_call_id: "done_1",
-          name: "echo",
-          content: "done",
-          ok: true
+          tool_name: "echo",
+          content: [%Messages.TextContent{text: "done"}],
+          is_error: false
         }
       ]
 
@@ -364,7 +380,7 @@ defmodule Eva.Agent.HarnessTest do
         Enum.filter(state.messages, &match?(%Messages.ToolResultMessage{}, &1))
 
       assert length(results) == 1
-      assert hd(results).ok == true
+      assert hd(results).is_error == false
     end
 
     test "no-op when transcript ends with UserMessage" do
@@ -388,7 +404,17 @@ defmodule Eva.Agent.HarnessTest do
     test "harness survives loop crash" do
       {:ok, provider} =
         MockProvider.start_link([
-          [stream_start(), %AIEvents.ProviderError{message: "fatal"}, response_end("")]
+          [
+            stream_start(),
+            %AIEvents.AssistantError{
+              reason: :error,
+              error: %Messages.AssistantMessage{
+                model: "test",
+                stop_reason: :error,
+                error_message: "fatal"
+              }
+            }
+          ]
         ])
 
       {:ok, harness} = Harness.start_link(provider_pid: provider, messages: [])
@@ -427,7 +453,9 @@ defmodule Eva.Agent.HarnessTest do
     test "continues from a prior transcript" do
       prior = [
         %Messages.UserMessage{content: "old question"},
-        %Messages.AssistantMessage{content: "old answer", tool_calls: []}
+        %Messages.AssistantMessage{
+          content: [%Messages.TextContent{text: "old answer"}]
+        }
       ]
 
       {:ok, provider} = MockProvider.start_link(basic_turn())
@@ -442,7 +470,8 @@ defmodule Eva.Agent.HarnessTest do
       {:ok, state} = Harness.get_state(harness)
 
       assert length(state.messages) == 4
-      assert %Messages.AssistantMessage{content: "hello"} = List.last(state.messages)
+      assert %Messages.AssistantMessage{} = assistant = List.last(state.messages)
+      assert Messages.AssistantMessage.text(assistant) == "hello"
     end
   end
 
@@ -453,20 +482,26 @@ defmodule Eva.Agent.HarnessTest do
     unless lm_studio_alive?() do
       IO.puts(:stderr, "Skipping integration test: LM Studio not reachable at #{lm_studio_url()}")
     else
+      config = %Eva.AI.Config.OpenAICompatible{
+        base_url: lm_studio_url(),
+        api: "openai-completions",
+        provider_name: "lm-studio"
+      }
+
       {:ok, provider} =
-        Eva.AI.LmStudio.start_link(
-          name: Eva.Test.Harness.LmStudio,
-          system_prompt: "You are a helpful assistant. Answer in one short sentence.",
-          model: model_name()
-        )
+        Eva.AI.OpenAICompatibleProvider.start_link(config: config, name: nil)
 
       {:ok, harness} =
         Harness.start_link(
           provider_pid: provider,
-          messages: []
+          messages: [],
+          system_prompt: "You are a helpful assistant. Answer in one short sentence.",
+          model: model_name()
         )
 
-      {:ok, state} = Harness.prompt(harness, "Say hello in exactly one word")
+      {:ok, state} =
+        Harness.prompt(harness, %Messages.UserMessage{content: "Say hello in exactly one word"})
+
       assert state.running?
 
       wait_for_idle(harness, 60_000)

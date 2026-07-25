@@ -2,7 +2,7 @@ defmodule Eva.Agent.Session.JsonlTest do
   use ExUnit.Case
 
   alias Eva.Agent.Messages
-  alias Eva.Agent.Tools.ToolCall
+  alias Eva.Agent.Messages.ToolCall
   alias Eva.Agent.Session.Entries
   alias Eva.Agent.Session.Jsonl
 
@@ -25,7 +25,11 @@ defmodule Eva.Agent.Session.JsonlTest do
 
     test "serializes a Message entry with tool calls" do
       tc = %ToolCall{id: "t1", name: "read", arguments: %{"path" => "foo.ex"}}
-      msg = %Messages.AssistantMessage{role: "assistant", content: "ok", tool_calls: [tc]}
+
+      msg = %Messages.AssistantMessage{
+        role: "assistant",
+        content: [tc]
+      }
 
       entry = %Entries.Message{
         id: "m1",
@@ -39,8 +43,9 @@ defmodule Eva.Agent.Session.JsonlTest do
       assert String.ends_with?(line, "\n")
       decoded = JSON.decode!(String.trim(line))
       assert decoded["type"] == "message"
-      assert get_in(decoded, ["message", "content"]) == "ok"
-      assert length(decoded["message"]["tool_calls"]) == 1
+      assert decoded["message"]["role"] == "assistant"
+      assert length(decoded["message"]["content"]) == 1
+      assert get_in(decoded, ["message", "content", Access.at(0), "type"]) == "tool_call"
     end
 
     test "serializes a ThinkingLevelChange entry" do
@@ -162,21 +167,23 @@ defmodule Eva.Agent.Session.JsonlTest do
 
     test "deserializes a Message with tool calls" do
       json =
-        ~s({"id":"m1","parent_id":"p1","timestamp":2.0,"type":"message","message":{"role":"assistant","content":"ok","tool_calls":[{"id":"t1","name":"read","arguments":{"path":"foo.ex"}}]}})
+        ~s({"id":"m1","parent_id":"p1","timestamp":2.0,"type":"message","message":{"role":"assistant","content":[{"type":"tool_call","id":"t1","name":"read","arguments":{"path":"foo.ex"}}]}})
 
       entry = Jsonl.entry_from_json_line(json)
       assert %Entries.Message{} = entry
-      assert entry.message.content == "ok"
-      assert [%ToolCall{id: "t1", name: "read"}] = entry.message.tool_calls
+      assert length(entry.message.content) == 1
+
+      assert [%ToolCall{id: "t1", name: "read"}] =
+               Messages.AssistantMessage.tool_calls(entry.message)
     end
 
     test "deserializes a Message with no tool_calls" do
       json =
-        ~s({"id":"m2","parent_id":null,"timestamp":3.0,"type":"message","message":{"role":"assistant","content":"hi","tool_calls":[]}})
+        ~s({"id":"m2","parent_id":null,"timestamp":3.0,"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"hi","text_signature":null}]}})
 
       entry = Jsonl.entry_from_json_line(json)
       assert %Entries.Message{} = entry
-      assert entry.message.tool_calls == []
+      assert Messages.AssistantMessage.tool_calls(entry.message) == []
     end
 
     test "deserializes a ThinkingLevelChange with nil level" do
@@ -203,7 +210,7 @@ defmodule Eva.Agent.Session.JsonlTest do
 
       entry = Jsonl.entry_from_json_line(json)
       assert %Entries.Compaction{} = entry
-      assert entry.replaces_entry_ids == []
+      assert entry.replaces_entry_ids == nil
     end
 
     test "deserializes a BranchSummary" do
@@ -253,7 +260,7 @@ defmodule Eva.Agent.Session.JsonlTest do
       json = ~s({"id":"cu1","parent_id":null,"timestamp":10.0,"type":"custom","namespace":"ns"})
       entry = Jsonl.entry_from_json_line(json)
       assert %Entries.Custom{} = entry
-      assert entry.data == %{}
+      assert entry.data == nil
     end
 
     test "includes line number in error message" do
@@ -360,7 +367,11 @@ defmodule Eva.Agent.Session.JsonlTest do
 
     test "Message with tool call survives encode then decode" do
       tc = %ToolCall{id: "tc1", name: "bash", arguments: %{"cmd" => "ls"}}
-      msg = %Messages.AssistantMessage{role: "assistant", content: "running", tool_calls: [tc]}
+
+      msg = %Messages.AssistantMessage{
+        role: "assistant",
+        content: [%Messages.TextContent{text: "running"}, tc]
+      }
 
       entry = %Entries.Message{
         id: "msg1",
@@ -371,8 +382,8 @@ defmodule Eva.Agent.Session.JsonlTest do
       }
 
       result = round_trip(entry)
-      assert result.message.content == "running"
-      assert Enum.count(result.message.tool_calls) == 1
+      assert Messages.AssistantMessage.text(result.message) == "running"
+      assert Enum.count(Messages.AssistantMessage.tool_calls(result.message)) == 1
     end
 
     test "ThinkingLevelChange survives encode then decode" do

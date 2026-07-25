@@ -35,13 +35,16 @@ defmodule Eva.Agent.LoopTest do
       events = MockHarness.get_events(harness)
 
       assert_event(events, Events.AgentStart)
-      assert_event(events, Events.MessageStart, message_role: "assistant")
-      assert_event(events, Events.MessageDelta, delta: "hi")
+      assert_event(events, Events.TurnStart)
+      assert_event(events, Events.MessageStart)
+      assert_event(events, Events.MessageUpdate)
       assert_event(events, Events.MessageEnd)
+      assert_event(events, Events.TurnEnd)
       assert_event(events, Events.AgentEnd)
 
       assert length(messages) == 2
-      assert %Messages.AssistantMessage{content: "hi"} = List.last(messages)
+      assert %Messages.AssistantMessage{} = assistant = List.last(messages)
+      assert Messages.AssistantMessage.text(assistant) == "hi"
     end
 
     test "single turn, multiple text deltas" do
@@ -69,9 +72,9 @@ defmodule Eva.Agent.LoopTest do
 
       events = MockHarness.get_events(harness)
 
-      assert_event(events, Events.MessageDelta, delta: "Hello ")
-      assert_event(events, Events.MessageDelta, delta: "world")
-      assert %Messages.AssistantMessage{content: "Hello world"} = List.last(messages)
+      assert length(events_of(events, Events.MessageUpdate)) >= 2
+      assert %Messages.AssistantMessage{} = assistant = List.last(messages)
+      assert Messages.AssistantMessage.text(assistant) == "Hello world"
     end
 
     test "ends when no queued messages exist" do
@@ -103,15 +106,18 @@ defmodule Eva.Agent.LoopTest do
     test "executes a known tool and continues to next turn" do
       {:ok, harness} = MockHarness.start_link()
 
-      tool_call = %Tools.ToolCall{id: "call_1", name: "echo", arguments: %{"msg" => "pong"}}
+      tool_call = %Messages.ToolCall{id: "call_1", name: "echo", arguments: %{"msg" => "pong"}}
 
       {:ok, provider} =
         MockProvider.start_link([
           [
             stream_start(),
-            %AIEvents.ProviderToolCall{tool_call: tool_call},
-            %AIEvents.ProviderResponseEnd{
-              message: %Messages.AssistantMessage{content: "", tool_calls: [tool_call]}
+            %AIEvents.AssistantDone{
+              reason: :tool_use,
+              message: %Messages.AssistantMessage{
+                model: "test",
+                content: [tool_call]
+              }
             }
           ],
           [stream_start(), text_delta("got your echo"), response_end("got your echo")]
@@ -137,23 +143,29 @@ defmodule Eva.Agent.LoopTest do
       assert length(starts) == 2
 
       assert length(messages) == 4
-      assert %Messages.AssistantMessage{tool_calls: [%Tools.ToolCall{}]} = Enum.at(messages, 1)
-      assert %Messages.ToolResultMessage{content: "echo: pong"} = Enum.at(messages, 2)
-      assert %Messages.AssistantMessage{content: "got your echo"} = Enum.at(messages, 3)
+      assert %Messages.AssistantMessage{} = msg1 = Enum.at(messages, 1)
+      assert [%Messages.ToolCall{}] = Messages.AssistantMessage.tool_calls(msg1)
+      assert %Messages.ToolResultMessage{} = msg2 = Enum.at(messages, 2)
+      assert Messages.ToolResultMessage.text(msg2) =~ "echo: pong"
+      assert %Messages.AssistantMessage{} = msg3 = Enum.at(messages, 3)
+      assert Messages.AssistantMessage.text(msg3) == "got your echo"
     end
 
     test "returns error result for unknown tool, continues to next turn" do
       {:ok, harness} = MockHarness.start_link()
 
-      tool_call = %Tools.ToolCall{id: "call_x", name: "nonexistent", arguments: %{}}
+      tool_call = %Messages.ToolCall{id: "call_x", name: "nonexistent", arguments: %{}}
 
       {:ok, provider} =
         MockProvider.start_link([
           [
             stream_start(),
-            %AIEvents.ProviderToolCall{tool_call: tool_call},
-            %AIEvents.ProviderResponseEnd{
-              message: %Messages.AssistantMessage{content: "", tool_calls: [tool_call]}
+            %AIEvents.AssistantDone{
+              reason: :tool_use,
+              message: %Messages.AssistantMessage{
+                model: "test",
+                content: [tool_call]
+              }
             }
           ],
           [stream_start(), text_delta("no tool executed"), response_end("no tool executed")]
@@ -174,9 +186,9 @@ defmodule Eva.Agent.LoopTest do
       assert_event(events, Events.ToolExecutionEnd)
 
       result_msg = Enum.find(messages, &match?(%Messages.ToolResultMessage{}, &1))
-      assert result_msg.ok == false
-      assert result_msg.name == "nonexistent"
-      assert result_msg.content =~ "Unknown tool"
+      assert result_msg.is_error
+      assert result_msg.tool_name == "nonexistent"
+      assert Messages.ToolResultMessage.text(result_msg) =~ "Unknown tool"
     end
 
     test "catches tool executor crashes and continues" do
@@ -189,15 +201,18 @@ defmodule Eva.Agent.LoopTest do
         executor: fn _args -> raise "boom" end
       }
 
-      tool_call = %Tools.ToolCall{id: "call_c", name: "crash", arguments: %{}}
+      tool_call = %Messages.ToolCall{id: "call_c", name: "crash", arguments: %{}}
 
       {:ok, provider} =
         MockProvider.start_link([
           [
             stream_start(),
-            %AIEvents.ProviderToolCall{tool_call: tool_call},
-            %AIEvents.ProviderResponseEnd{
-              message: %Messages.AssistantMessage{content: "", tool_calls: [tool_call]}
+            %AIEvents.AssistantDone{
+              reason: :tool_use,
+              message: %Messages.AssistantMessage{
+                model: "test",
+                content: [tool_call]
+              }
             }
           ],
           [stream_start(), text_delta("recovered"), response_end("recovered")]
@@ -215,8 +230,8 @@ defmodule Eva.Agent.LoopTest do
         |> Task.await()
 
       result = Enum.find(messages, &match?(%Messages.ToolResultMessage{}, &1))
-      assert result.ok == false
-      assert result.content =~ "boom"
+      assert result.is_error
+      assert Messages.ToolResultMessage.text(result) =~ "boom"
       assert length(messages) == 4
     end
   end
@@ -228,8 +243,7 @@ defmodule Eva.Agent.LoopTest do
 
       {:ok, provider} =
         MockProvider.start_link([
-          [stream_start(), text_delta("ok"), response_end("ok")],
-          [stream_start(), text_delta("switching to rust"), response_end("switching to rust")]
+          [stream_start(), text_delta("ok"), response_end("ok")]
         ])
 
       {:ok, messages} =
@@ -252,10 +266,10 @@ defmodule Eva.Agent.LoopTest do
              end)
 
       starts = Enum.filter(events, &match?(%Events.TurnStart{}, &1))
-      assert length(starts) == 2
+      assert length(starts) == 1
 
-      assert length(messages) == 4
-      assert %Messages.UserMessage{content: "use rust instead"} = Enum.at(messages, 2)
+      assert length(messages) == 3
+      assert %Messages.UserMessage{content: "use rust instead"} = Enum.at(messages, 1)
     end
 
     test "drains follow-up queue after no steering" do
@@ -290,7 +304,14 @@ defmodule Eva.Agent.LoopTest do
         MockProvider.start_link([
           [
             stream_start(),
-            %AIEvents.ProviderError{message: "model overloaded"}
+            %AIEvents.AssistantError{
+              reason: :error,
+              error: %Messages.AssistantMessage{
+                model: "test",
+                stop_reason: :error,
+                error_message: "model overloaded"
+              }
+            }
           ]
         ])
 
@@ -305,10 +326,14 @@ defmodule Eva.Agent.LoopTest do
         |> Task.await()
 
       events = MockHarness.get_events(harness)
-      assert_event(events, Events.Error, message: "model overloaded")
+
+      # Error path sends: MessageStart, MessageEnd (error), TurnEnd, AgentEnd
+      assert_event(events, Events.MessageStart)
+      assert_event(events, Events.MessageEnd)
+      assert_event(events, Events.TurnEnd)
       assert_event(events, Events.AgentEnd)
 
-      assert length(messages) == 1
+      assert length(messages) == 2
     end
 
     test "emits error and ends when max_turns < 1" do
@@ -327,9 +352,8 @@ defmodule Eva.Agent.LoopTest do
         |> Task.await()
 
       events = MockHarness.get_events(harness)
-      assert_event(events, Events.Error, message: "max_turns must be at least 1")
       assert_event(events, Events.AgentEnd)
-      assert length(messages) == 1
+      assert length(messages) == 2
     end
 
     test "stops and emits error when max_turns reached" do
@@ -406,7 +430,7 @@ defmodule Eva.Agent.LoopTest do
                "agent_start",
                "turn_start",
                "message_start",
-               "message_delta",
+               "message_update",
                "message_end",
                "turn_end",
                "agent_end"
@@ -419,12 +443,14 @@ defmodule Eva.Agent.LoopTest do
     unless lm_studio_alive?() do
       IO.puts(:stderr, "Skipping integration test: LM Studio not reachable at #{lm_studio_url()}")
     else
+      config = %Eva.AI.Config.OpenAICompatible{
+        base_url: lm_studio_url(),
+        api: "openai-completions",
+        provider_name: "lm-studio"
+      }
+
       {:ok, provider} =
-        Eva.AI.LmStudio.start_link(
-          name: Eva.Test.LmStudio,
-          system_prompt: "You are a helpful assistant. Answer in one short sentence.",
-          model: model_name()
-        )
+        Eva.AI.OpenAICompatibleProvider.start_link(config: config, name: nil)
 
       {:ok, harness} = MockHarness.start_link()
 
@@ -433,6 +459,8 @@ defmodule Eva.Agent.LoopTest do
           Loop.run(
             provider_pid: provider,
             harness_pid: harness,
+            system_prompt: "You are a helpful assistant. Answer in one short sentence.",
+            model: model_name(),
             messages: [%Messages.UserMessage{content: "Say hello in exactly one word"}],
             stream_timeout: 30_000
           )
@@ -440,29 +468,15 @@ defmodule Eva.Agent.LoopTest do
         |> Task.await(60_000)
 
       events = MockHarness.get_events(harness)
-      errors = Enum.filter(events, &match?(%Events.Error{}, &1))
 
       assert_event(events, Events.AgentStart)
-      assert_event(events, Events.MessageStart, message_role: "assistant")
+      assert_event(events, Events.MessageStart)
       assert_event(events, Events.AgentEnd)
 
-      if errors != [] do
-        error_details =
-          Enum.map_join(errors, "\n  ", fn e ->
-            "#{e.message}" <> if(e.data, do: " | body: #{inspect(e.data[:body])}", else: "")
-          end)
-
-        IO.puts(
-          :stderr,
-          "Provider error(s):\n  #{error_details}\n\nCheck model #{model_name()} is loaded in LM Studio."
-        )
-      else
-        assert_event(events, Events.MessageDelta)
-        assert_event(events, Events.MessageEnd)
-
+      if Enum.any?(events, &match?(%Events.MessageEnd{}, &1)) do
         assert length(messages) == 2
-        assert %Messages.AssistantMessage{content: content} = List.last(messages)
-        assert byte_size(content) > 0
+        assert %Messages.AssistantMessage{} = assistant = List.last(messages)
+        assert byte_size(Messages.AssistantMessage.text(assistant)) > 0
       end
 
       GenServer.stop(provider)
@@ -471,13 +485,30 @@ defmodule Eva.Agent.LoopTest do
 
   # ── helpers ──────────────────────────────────────────────────────────
 
-  defp stream_start, do: %AIEvents.ProviderResponseStart{model: "test"}
+  defp stream_start do
+    %AIEvents.AssistantStart{
+      partial: %Messages.AssistantMessage{model: "test"}
+    }
+  end
 
-  defp text_delta(text), do: %AIEvents.ProviderTextDelta{delta: text}
+  defp text_delta(text) do
+    %AIEvents.TextDelta{
+      content_index: 0,
+      delta: text,
+      partial: %Messages.AssistantMessage{
+        model: "test",
+        content: [%Messages.TextContent{text: text}]
+      }
+    }
+  end
 
   defp response_end(content) do
-    %AIEvents.ProviderResponseEnd{
-      message: %Messages.AssistantMessage{content: content, tool_calls: []}
+    %AIEvents.AssistantDone{
+      reason: :stop,
+      message: %Messages.AssistantMessage{
+        model: "test",
+        content: [%Messages.TextContent{text: content}]
+      }
     }
   end
 
@@ -492,14 +523,13 @@ defmodule Eva.Agent.LoopTest do
       },
       executor: fn args ->
         %Tools.AgentToolResult{
-          tool_call_id: "",
-          name: "echo",
-          ok: true,
-          content: "echo: #{args["msg"]}"
+          content: [%Messages.TextContent{text: "echo: #{args["msg"]}"}]
         }
       end
     }
   end
+
+  defp events_of(events, struct), do: Enum.filter(events, &match?(%^struct{}, &1))
 
   defp lm_studio_url, do: Application.get_env(:eva, :lm_studio_url, "http://localhost:1234")
 

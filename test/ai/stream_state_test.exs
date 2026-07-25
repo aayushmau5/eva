@@ -2,20 +2,19 @@ defmodule Eva.AI.StreamStateTest do
   use ExUnit.Case
 
   alias Eva.AI.StreamState
-  alias Eva.Agent.Tools.ToolCall
+  alias Eva.Agent.Messages.ToolCall
 
   describe "feed/2" do
     test "accumulates content across multiple data chunks" do
       data =
         "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\ndata: {\"choices\":[{\"delta\":{\"content\":\" World\"}}]}\n"
 
-      {state, events} = StreamState.feed(%StreamState{}, data)
+      {_state, events} = StreamState.feed(%StreamState{}, data)
 
       content_events = Enum.filter(events, fn e -> match?({:content, _}, e) end)
       assert length(content_events) == 2
       assert {:content, "Hello"} in content_events
       assert {:content, " World"} in content_events
-      assert state.content_rev == [" World", "Hello"]
     end
 
     test "accumulates thinking deltas" do

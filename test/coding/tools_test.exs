@@ -2,6 +2,7 @@ defmodule Eva.Coding.ToolsTest do
   use ExUnit.Case
 
   alias Eva.Coding.Tools, as: CodingTools
+  alias Eva.Agent.Messages, as: Msg
 
   @tmp_root Path.expand("tmp/test")
 
@@ -26,27 +27,24 @@ defmodule Eva.Coding.ToolsTest do
       path = write_file(tmp, "hello.txt", "line1\nline2\nline3\n")
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
 
-      assert result.ok
-      assert result.content == "line1\nline2\nline3\n"
-      refute result.data.truncation.truncated
+      assert Msg.content_text(result.content) == "line1\nline2\nline3\n"
+      refute result.details.truncation.truncated
     end
 
     test "reads with offset", %{tmp: tmp} do
       path = write_file(tmp, "hello.txt", "a\nb\nc\nd\ne\n")
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path, "offset" => 3})
 
-      assert result.ok
-      assert result.content == "c\nd\ne\n"
+      assert Msg.content_text(result.content) == "c\nd\ne\n"
     end
 
     test "reads with limit and shows remaining hint", %{tmp: tmp} do
       path = write_file(tmp, "hello.txt", "a\nb\nc\nd\ne\n")
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path, "limit" => 2})
 
-      assert result.ok
-      assert result.content =~ "a\nb"
-      assert result.content =~ "more lines in file"
-      assert result.content =~ "offset=3"
+      assert Msg.content_text(result.content) =~ "a\nb"
+      assert Msg.content_text(result.content) =~ "more lines in file"
+      assert Msg.content_text(result.content) =~ "offset=3"
     end
 
     test "reads with offset and limit", %{tmp: tmp} do
@@ -55,26 +53,23 @@ defmodule Eva.Coding.ToolsTest do
       result =
         CodingTools.read_tool(tmp).executor.(%{"path" => path, "offset" => 2, "limit" => 2})
 
-      assert result.ok
-      assert result.content =~ "b\nc"
-      assert result.content =~ "more lines"
+      assert Msg.content_text(result.content) =~ "b\nc"
+      assert Msg.content_text(result.content) =~ "more lines"
     end
 
     test "reads an empty file", %{tmp: tmp} do
       path = write_file(tmp, "empty.txt", "")
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
 
-      assert result.ok
-      assert result.content == ""
+      assert Msg.content_text(result.content) == ""
     end
 
     test "reads a file without trailing newline", %{tmp: tmp} do
       path = write_file(tmp, "noeol.txt", "single line")
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
 
-      assert result.ok
-      assert result.content == "single line"
-      assert result.data.truncation.total_lines == 1
+      assert Msg.content_text(result.content) == "single line"
+      assert result.details.truncation.total_lines == 1
     end
   end
 
@@ -99,7 +94,7 @@ defmodule Eva.Coding.ToolsTest do
       path = write_file(tmp, "x.txt", "hi\n")
       tool = CodingTools.read_tool(tmp)
 
-      assert_raise RuntimeError, ~r/offset must be atleast 0/, fn ->
+      assert_raise RuntimeError, ~r/offset must be at least 0/, fn ->
         tool.executor.(%{"path" => path, "offset" => -1})
       end
     end
@@ -108,7 +103,7 @@ defmodule Eva.Coding.ToolsTest do
       path = write_file(tmp, "x.txt", "hi\n")
       tool = CodingTools.read_tool(tmp)
 
-      assert_raise RuntimeError, ~r/limit must be atleast 1/, fn ->
+      assert_raise RuntimeError, ~r/limit must be at least 1/, fn ->
         tool.executor.(%{"path" => path, "limit" => 0})
       end
     end
@@ -150,10 +145,9 @@ defmodule Eva.Coding.ToolsTest do
 
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
 
-      assert result.ok
-      assert result.data.truncation.truncated
-      assert result.data.truncation.truncated_by == "lines"
-      assert result.content =~ "Showing lines 1-2000"
+      assert result.details.truncation.truncated
+      assert result.details.truncation.truncated_by == "lines"
+      assert Msg.content_text(result.content) =~ "Showing lines 1-2000"
     end
 
     test "first line exceeds max output bytes", %{tmp: tmp} do
@@ -162,11 +156,10 @@ defmodule Eva.Coding.ToolsTest do
 
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
 
-      assert result.ok
-      assert result.data.truncation.first_line_exceeds_limit
-      assert result.content =~ "Line 1 is"
-      assert result.content =~ "exceeds 50.0KB"
-      assert result.content =~ "sed -n '1p'"
+      assert result.details.truncation.first_line_exceeds_limit
+      assert Msg.content_text(result.content) =~ "Line 1 is"
+      assert Msg.content_text(result.content) =~ "exceeds 50.0KB"
+      assert Msg.content_text(result.content) =~ "sed -n '1p'"
     end
 
     test "truncation metadata is present for small files", %{tmp: tmp} do
@@ -174,9 +167,9 @@ defmodule Eva.Coding.ToolsTest do
 
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
 
-      assert result.data.truncation.truncated == false
-      assert result.data.truncation.total_lines == 2
-      assert result.data.truncation.output_bytes == byte_size("hello\nworld\n")
+      assert result.details.truncation.truncated == false
+      assert result.details.truncation.total_lines == 2
+      assert result.details.truncation.output_bytes == byte_size("hello\nworld\n")
     end
 
     test "truncates by bytes when collective lines hit byte limit before line limit", %{tmp: tmp} do
@@ -187,10 +180,9 @@ defmodule Eva.Coding.ToolsTest do
 
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
 
-      assert result.ok
-      assert result.data.truncation.truncated
-      assert result.data.truncation.truncated_by == "bytes"
-      assert result.content =~ "50.0KB"
+      assert result.details.truncation.truncated
+      assert result.details.truncation.truncated_by == "bytes"
+      assert Msg.content_text(result.content) =~ "50.0KB"
     end
 
     test "reads last line with offset and limit that reaches EOF", %{tmp: tmp} do
@@ -199,8 +191,7 @@ defmodule Eva.Coding.ToolsTest do
       result =
         CodingTools.read_tool(tmp).executor.(%{"path" => path, "offset" => 3, "limit" => 1})
 
-      assert result.ok
-      assert result.content == "c"
+      assert Msg.content_text(result.content) == "c"
     end
 
     test "total_lines in truncation strips trailing empty line", %{tmp: tmp} do
@@ -208,7 +199,7 @@ defmodule Eva.Coding.ToolsTest do
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
 
       # split_lines_for_counting drops trailing empty from EOL-terminated files
-      assert result.data.truncation.total_lines == 2
+      assert result.details.truncation.total_lines == 2
     end
   end
 
@@ -220,10 +211,9 @@ defmodule Eva.Coding.ToolsTest do
 
       result = tool.executor.(%{"path" => path, "content" => content})
 
-      assert result.ok
-      assert result.content =~ "Successfully wrote to #{path}"
-      assert result.data.path == path
-      assert result.data.characters == String.length(content)
+      assert Msg.content_text(result.content) =~ "Successfully wrote to #{path}"
+      assert result.details.path == path
+      assert result.details.characters == String.length(content)
       assert File.exists?(path)
       assert File.read!(path) == content
     end
@@ -235,7 +225,6 @@ defmodule Eva.Coding.ToolsTest do
 
       result = tool.executor.(%{"path" => path, "content" => new_content})
 
-      assert result.ok
       assert File.read!(path) == new_content
     end
 
@@ -246,7 +235,6 @@ defmodule Eva.Coding.ToolsTest do
 
       result = tool.executor.(%{"path" => path, "content" => content})
 
-      assert result.ok
       assert File.exists?(path)
       assert File.read!(path) == content
     end
@@ -257,8 +245,7 @@ defmodule Eva.Coding.ToolsTest do
 
       result = tool.executor.(%{"path" => path, "content" => ""})
 
-      assert result.ok
-      assert result.data.characters == 0
+      assert result.details.characters == 0
       assert File.read!(path) == ""
     end
 
@@ -283,11 +270,10 @@ defmodule Eva.Coding.ToolsTest do
 
       result = tool.executor.(%{"path" => "relative.txt", "content" => "relative content"})
 
-      assert result.ok
-      assert result.data.path =~ ~r/relative\.txt$/
-      assert File.exists?(result.data.path)
-      assert File.read!(result.data.path) == "relative content"
-      File.rm!(result.data.path)
+      assert result.details.path =~ ~r/relative\.txt$/
+      assert File.exists?(result.details.path)
+      assert File.read!(result.details.path) == "relative content"
+      File.rm!(result.details.path)
     end
   end
 
@@ -296,40 +282,36 @@ defmodule Eva.Coding.ToolsTest do
       path = write_file(tmp, "img.png", "fake-image-data")
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
 
-      assert result.ok
-      assert result.content == "Read image file [image/png]"
-      assert result.data.mime_type == "image/png"
-      assert result.data.image_base64 != nil
-      assert result.data.bytes == byte_size("fake-image-data")
+      assert Msg.content_text(result.content) == "Read image file [image/png]"
+      assert result.details.mime_type == "image/png"
+      assert result.details.image_base64 != nil
+      assert result.details.bytes == byte_size("fake-image-data")
     end
 
     test "returns image metadata for jpg", %{tmp: tmp} do
       path = write_file(tmp, "photo.jpg", "not-real-jpg")
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
 
-      assert result.ok
-      assert result.content == "Read image file [image/jpeg]"
-      assert result.data.mime_type == "image/jpeg"
+      assert Msg.content_text(result.content) == "Read image file [image/jpeg]"
+      assert result.details.mime_type == "image/jpeg"
     end
 
     test "returns image metadata for gif", %{tmp: tmp} do
       path = write_file(tmp, "anim.gif", "fake-gif-data")
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
 
-      assert result.ok
-      assert result.content == "Read image file [image/gif]"
-      assert result.data.mime_type == "image/gif"
-      assert result.data.image_base64 != nil
+      assert Msg.content_text(result.content) == "Read image file [image/gif]"
+      assert result.details.mime_type == "image/gif"
+      assert result.details.image_base64 != nil
     end
 
     test "returns image metadata for webp", %{tmp: tmp} do
       path = write_file(tmp, "img.webp", "fake-webp-data")
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
 
-      assert result.ok
-      assert result.content == "Read image file [image/webp]"
-      assert result.data.mime_type == "image/webp"
-      assert result.data.image_base64 != nil
+      assert Msg.content_text(result.content) == "Read image file [image/webp]"
+      assert result.details.mime_type == "image/webp"
+      assert result.details.image_base64 != nil
     end
   end
 
@@ -344,14 +326,13 @@ defmodule Eva.Coding.ToolsTest do
           "edits" => [%{"oldText" => "beta", "newText" => "BETA"}]
         })
 
-      assert result.ok
-      assert result.data.first_changed_line == 2
-      assert result.data.diff =~ "- beta"
-      assert result.data.diff =~ "+ BETA"
-      assert result.data.patch =~ "--- x.txt\n"
-      assert result.data.patch =~ "@@ -1,3 +1,3 @@"
-      assert result.data.patch =~ "-beta"
-      assert result.data.patch =~ "+BETA"
+      assert result.details.first_changed_line == 2
+      assert result.details.diff =~ "- beta"
+      assert result.details.diff =~ "+ BETA"
+      assert result.details.patch =~ "--- x.txt\n"
+      assert result.details.patch =~ "@@ -1,3 +1,3 @@"
+      assert result.details.patch =~ "-beta"
+      assert result.details.patch =~ "+BETA"
       assert File.read!(path) == "alpha\nBETA\ngamma\n"
     end
 
@@ -368,13 +349,12 @@ defmodule Eva.Coding.ToolsTest do
           ]
         })
 
-      assert result.ok
-      assert result.data.edits == 2
-      assert result.data.first_changed_line == 2
-      assert result.data.diff =~ "- beta"
-      assert result.data.diff =~ "+ BETA"
-      assert result.data.diff =~ "- delta"
-      assert result.data.diff =~ "+ DELTA"
+      assert result.details.edits == 2
+      assert result.details.first_changed_line == 2
+      assert result.details.diff =~ "- beta"
+      assert result.details.diff =~ "+ BETA"
+      assert result.details.diff =~ "- delta"
+      assert result.details.diff =~ "+ DELTA"
       assert File.read!(path) == "alpha\nBETA\ngamma\nDELTA\nepsilon\n"
     end
 
@@ -388,10 +368,9 @@ defmodule Eva.Coding.ToolsTest do
           "edits" => [%{"oldText" => "alpha", "newText" => "ALPHA"}]
         })
 
-      assert result.ok
-      assert result.data.first_changed_line == 1
-      assert result.data.diff =~ "- alpha"
-      assert result.data.diff =~ "+ ALPHA"
+      assert result.details.first_changed_line == 1
+      assert result.details.diff =~ "- alpha"
+      assert result.details.diff =~ "+ ALPHA"
       assert File.read!(path) == "ALPHA\nbeta\ngamma\n"
     end
 
@@ -405,10 +384,9 @@ defmodule Eva.Coding.ToolsTest do
           "edits" => [%{"oldText" => "gamma", "newText" => "GAMMA"}]
         })
 
-      assert result.ok
-      assert result.data.first_changed_line == 3
-      assert result.data.diff =~ "- gamma"
-      assert result.data.diff =~ "+ GAMMA"
+      assert result.details.first_changed_line == 3
+      assert result.details.diff =~ "- gamma"
+      assert result.details.diff =~ "+ GAMMA"
       assert File.read!(path) == "alpha\nbeta\nGAMMA\n"
     end
 
@@ -422,9 +400,8 @@ defmodule Eva.Coding.ToolsTest do
           "edits" => [%{"oldText" => "beta\n", "newText" => ""}]
         })
 
-      assert result.ok
-      assert result.data.first_changed_line == 2
-      assert result.data.diff =~ "- beta"
+      assert result.details.first_changed_line == 2
+      assert result.details.diff =~ "- beta"
       assert File.read!(path) == "alpha\ngamma\n"
     end
 
@@ -438,8 +415,7 @@ defmodule Eva.Coding.ToolsTest do
           "edits" => [%{"oldText" => "alpha\n", "newText" => "alpha\nbeta\n"}]
         })
 
-      assert result.ok
-      assert result.data.diff =~ "+ beta"
+      assert result.details.diff =~ "+ beta"
       assert File.read!(path) == "alpha\nbeta\ngamma\n"
     end
 
@@ -454,7 +430,6 @@ defmodule Eva.Coding.ToolsTest do
           "edits" => edits_json
         })
 
-      assert result.ok
       assert File.read!(path) == "alpha\nBETA\ngamma\n"
     end
 
@@ -469,10 +444,9 @@ defmodule Eva.Coding.ToolsTest do
           "edits" => [%{"oldText" => "line2", "newText" => "LINE2"}]
         })
 
-      assert result.ok
       assert File.read!(path) == "line1\r\nLINE2\r\nline3\r\n"
-      assert result.data.diff =~ "- line2"
-      assert result.data.diff =~ "+ LINE2"
+      assert result.details.diff =~ "- line2"
+      assert result.details.diff =~ "+ LINE2"
     end
 
     test "handles UTF-8 BOM", %{tmp: tmp} do
@@ -486,10 +460,9 @@ defmodule Eva.Coding.ToolsTest do
           "edits" => [%{"oldText" => "beta", "newText" => "BETA"}]
         })
 
-      assert result.ok
       assert File.read!(path) == "\uFEFFalpha\nBETA\ngamma\n"
-      assert result.data.diff =~ "- beta"
-      assert result.data.diff =~ "+ BETA"
+      assert result.details.diff =~ "- beta"
+      assert result.details.diff =~ "+ BETA"
     end
 
     test "raises when oldText not found", %{tmp: tmp} do
@@ -615,58 +588,51 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.bash_tool(tmp)
       result = tool.executor.(%{"command" => "echo hello"})
 
-      assert result.ok
-      assert result.content =~ "hello"
-      assert result.data["exit_code"] == 0
-      assert result.data["timed_out"] == false
-      assert result.data["cancelled"] == false
-      assert is_number(result.data["duration_seconds"])
-      refute result.data["truncation"].truncated
+      assert Msg.content_text(result.content) =~ "hello"
+      assert result.details["exit_code"] == 0
+      assert result.details["timed_out"] == false
+      assert result.details["cancelled"] == false
+      assert is_number(result.details["duration_seconds"])
+      refute result.details["truncation"].truncated
     end
 
     test "captures stderr in output", %{tmp: tmp} do
       tool = CodingTools.bash_tool(tmp)
       result = tool.executor.(%{"command" => "echo err >&2"})
 
-      assert result.ok
-      assert result.content =~ "err"
+      assert Msg.content_text(result.content) =~ "err"
     end
 
     test "returns non-zero exit code", %{tmp: tmp} do
       tool = CodingTools.bash_tool(tmp)
       result = tool.executor.(%{"command" => "exit 42"})
 
-      refute result.ok
-      assert result.data["exit_code"] == 42
-      assert result.content =~ "exited with code 42"
-      assert result.error =~ "exited with code 42"
+      assert result.details["exit_code"] == 42
+      assert Msg.content_text(result.content) =~ "exited with code 42"
     end
 
     test "returns (no output) for empty stdout", %{tmp: tmp} do
       tool = CodingTools.bash_tool(tmp)
       result = tool.executor.(%{"command" => "true"})
 
-      assert result.ok
-      assert result.content == "(no output)"
+      assert Msg.content_text(result.content) == "(no output)"
     end
 
     test "runs in the given cwd", %{tmp: tmp} do
       tool = CodingTools.bash_tool(tmp)
       result = tool.executor.(%{"command" => "pwd"})
 
-      assert result.ok
-      assert String.trim(result.content) == tmp
+      assert String.trim(Msg.content_text(result.content)) == tmp
     end
 
     test "truncates long output", %{tmp: tmp} do
       tool = CodingTools.bash_tool(tmp)
       result = tool.executor.(%{"command" => "yes 'x' | head -n 3000"})
 
-      assert result.ok
-      assert result.data["truncation"].truncated
-      assert result.content =~ "Full output:"
-      assert result.data["full_output_path"] != nil
-      assert File.exists?(result.data["full_output_path"])
+      assert result.details["truncation"].truncated
+      assert Msg.content_text(result.content) =~ "Full output:"
+      assert result.details["full_output_path"] != nil
+      assert File.exists?(result.details["full_output_path"])
     end
 
     test "raises on missing command", %{tmp: tmp} do

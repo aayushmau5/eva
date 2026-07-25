@@ -32,30 +32,33 @@ defmodule Eva.Coding.ContextWindowTest do
     end
 
     test "estimates assistant message without tool calls" do
-      msg = %Messages.AssistantMessage{content: "hi", tool_calls: []}
+      msg = %Messages.AssistantMessage{content: [%Messages.TextContent{text: "hi"}]}
       tokens = ContextWindow.estimate_message_tokens(msg)
       # 4 overhead + ceil(2/4) = 4 + 1 = 5
       assert tokens == 5
     end
 
     test "estimates assistant message with tool calls" do
-      tc = %Tools.ToolCall{
+      tc = %Messages.ToolCall{
         id: "call_1",
         name: "bash",
         arguments: %{"command" => "ls"}
       }
 
-      msg = %Messages.AssistantMessage{content: "running", tool_calls: [tc]}
+      msg = %Messages.AssistantMessage{
+        content: [%Messages.TextContent{text: "running"}, tc]
+      }
+
       tokens = ContextWindow.estimate_message_tokens(msg)
       # overhead(4) + content "running"(2) + tc_name "bash"(1) + tc_args_json(ceil(json_len/4))
       assert tokens > 0
     end
 
     test "estimates assistant message with multiple tool calls" do
-      tc1 = %Tools.ToolCall{id: "1", name: "read", arguments: %{}}
-      tc2 = %Tools.ToolCall{id: "2", name: "bash", arguments: %{"cmd" => "ls"}}
+      tc1 = %Messages.ToolCall{id: "1", name: "read", arguments: %{}}
+      tc2 = %Messages.ToolCall{id: "2", name: "bash", arguments: %{"cmd" => "ls"}}
 
-      msg = %Messages.AssistantMessage{content: "", tool_calls: [tc1, tc2]}
+      msg = %Messages.AssistantMessage{content: [tc1, tc2]}
       tokens = ContextWindow.estimate_message_tokens(msg)
       assert tokens > 0
     end
@@ -63,9 +66,9 @@ defmodule Eva.Coding.ContextWindowTest do
     test "estimates tool result message (success)" do
       msg = %Messages.ToolResultMessage{
         tool_call_id: "call_1",
-        name: "read_file",
-        content: "file contents here",
-        ok: true
+        tool_name: "read_file",
+        content: [%Messages.TextContent{text: "file contents here"}],
+        is_error: false
       }
 
       tokens = ContextWindow.estimate_message_tokens(msg)
@@ -75,9 +78,9 @@ defmodule Eva.Coding.ContextWindowTest do
     test "estimates tool result message (failure)" do
       msg = %Messages.ToolResultMessage{
         tool_call_id: "call_1",
-        name: "read_file",
-        content: "not found",
-        ok: false
+        tool_name: "read_file",
+        content: [%Messages.TextContent{text: "not found"}],
+        is_error: true
       }
 
       tokens = ContextWindow.estimate_message_tokens(msg)
@@ -169,12 +172,14 @@ defmodule Eva.Coding.ContextWindowTest do
     test "summarizes multiple messages of different roles" do
       msgs = [
         %Messages.UserMessage{content: "hi"},
-        %Messages.AssistantMessage{content: "hey", tool_calls: []},
+        %Messages.AssistantMessage{
+          content: [%Messages.TextContent{text: "hey"}]
+        },
         %Messages.ToolResultMessage{
           tool_call_id: "1",
-          name: "read",
-          content: "done",
-          ok: true
+          tool_name: "read",
+          content: [%Messages.TextContent{text: "done"}],
+          is_error: false
         }
       ]
 
@@ -187,10 +192,10 @@ defmodule Eva.Coding.ContextWindowTest do
 
     test "includes tool call names in assistant message summary" do
       msg = %Messages.AssistantMessage{
-        content: "running",
-        tool_calls: [
-          %Tools.ToolCall{id: "1", name: "bash", arguments: %{}},
-          %Tools.ToolCall{id: "2", name: "read", arguments: %{}}
+        content: [
+          %Messages.TextContent{text: "running"},
+          %Messages.ToolCall{id: "1", name: "bash", arguments: %{}},
+          %Messages.ToolCall{id: "2", name: "read", arguments: %{}}
         ]
       }
 
@@ -201,9 +206,9 @@ defmodule Eva.Coding.ContextWindowTest do
     test "shows ok status in tool messages" do
       ok_msg = %Messages.ToolResultMessage{
         tool_call_id: "1",
-        name: "cmd",
-        content: "output",
-        ok: true
+        tool_name: "cmd",
+        content: [%Messages.TextContent{text: "output"}],
+        is_error: false
       }
 
       result = ContextWindow.summarize_messages_for_compaction([ok_msg])
@@ -211,9 +216,9 @@ defmodule Eva.Coding.ContextWindowTest do
 
       fail_msg = %Messages.ToolResultMessage{
         tool_call_id: "1",
-        name: "cmd",
-        content: "error",
-        ok: false
+        tool_name: "cmd",
+        content: [%Messages.TextContent{text: "error"}],
+        is_error: true
       }
 
       result = ContextWindow.summarize_messages_for_compaction([fail_msg])
@@ -266,7 +271,9 @@ defmodule Eva.Coding.ContextWindowTest do
 
     test "first message is not user role does not trigger update path" do
       msgs = [
-        %Messages.AssistantMessage{content: "I can help", tool_calls: []},
+        %Messages.AssistantMessage{
+          content: [%Messages.TextContent{text: "I can help"}]
+        },
         %Messages.UserMessage{content: "Previous conversation summary:\nold stuff"}
       ]
 
@@ -284,7 +291,7 @@ defmodule Eva.Coding.ContextWindowTest do
       instructions = "Focus on the database schema changes."
 
       prompt = ContextWindow.build_compaction_prompt(msgs, instructions)
-      assert prompt =~ "Additional instructions: Focus on the database schema changes."
+      assert prompt =~ "Focus on the database schema changes."
     end
 
     test "does not include additional instructions when nil or empty" do
@@ -298,13 +305,18 @@ defmodule Eva.Coding.ContextWindowTest do
     end
 
     test "serializes assistant messages with tool calls" do
-      tc = %Tools.ToolCall{
+      tc = %Messages.ToolCall{
         id: "call_1",
         name: "bash",
         arguments: %{"command" => "mix test"}
       }
 
-      msgs = [%Messages.AssistantMessage{content: "Running tests", tool_calls: [tc]}]
+      msgs = [
+        %Messages.AssistantMessage{
+          content: [%Messages.TextContent{text: "Running tests"}, tc]
+        }
+      ]
+
       prompt = ContextWindow.build_compaction_prompt(msgs)
 
       assert prompt =~ ~s(<message index=1 role=assistant>)
@@ -318,15 +330,15 @@ defmodule Eva.Coding.ContextWindowTest do
       msgs = [
         %Messages.ToolResultMessage{
           tool_call_id: "1",
-          name: "read_file",
-          content: "file content",
-          ok: true
+          tool_name: "read_file",
+          content: [%Messages.TextContent{text: "file content"}],
+          is_error: false
         }
       ]
 
       prompt = ContextWindow.build_compaction_prompt(msgs)
 
-      assert prompt =~ ~s(<message index=1 role=tool name=read_file ok=true>)
+      assert prompt =~ ~s(<message index=1 role=tool name=read_file error=false>)
       assert prompt =~ "file content"
       assert prompt =~ "</message>"
     end

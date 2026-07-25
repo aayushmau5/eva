@@ -18,9 +18,9 @@ defmodule Eva.Test.MockProvider do
   end
 
   @impl true
-  def handle_cast({:run, run_opts}, state) do
+  def handle_cast({:stream, opts}, state) do
     turn_events = Enum.at(state.turns, state.current, [])
-    listener_pid = Keyword.fetch!(run_opts, :listener_pid)
+    listener_pid = opts.listener_pid
 
     Task.start(fn ->
       Enum.each(turn_events, fn event ->
