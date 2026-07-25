@@ -26,8 +26,9 @@ defmodule Eva.Agent.Session.Tree do
   """
   def path_to_entry(entries, leaf_id) do
     by_id = entries_by_id(entries)
-    path = walk_up(by_id, leaf_id, MapSet.new(), [])
-    Enum.reverse(path)
+
+    # walk_up climbs leaf -> root prepending as it goes, so what comes back is already ordered root -> leaf.
+    walk_up(by_id, leaf_id, MapSet.new(), [])
   end
 
   defp walk_up(_by_id, nil, _seen, path), do: path
