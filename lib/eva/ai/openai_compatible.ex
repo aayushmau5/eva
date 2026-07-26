@@ -1,7 +1,7 @@
 defmodule Eva.AI.OpenAICompatibleProvider do
   use GenServer
 
-  alias Eva.AI.{Events, StreamState}
+  alias Eva.AI.{Auth, Events, StreamState}
   alias Eva.AI.Config.OpenAICompatible, as: OpenAICompatibleConfig
   alias Eva.Agent.{Messages, Tools}
 
@@ -23,6 +23,23 @@ defmodule Eva.AI.OpenAICompatibleProvider do
   @spec stream_response(pid(), stream_opts()) :: :ok
   def stream_response(pid \\ __MODULE__, opts) do
     GenServer.cast(pid, {:stream, opts})
+  end
+
+  @spec list_models(OpenAICompatibleConfig.t()) :: {:ok, [String.t()]} | {:error, term()}
+  def list_models(%OpenAICompatibleConfig{} = config) do
+    resolved = Auth.resolve(config)
+
+    Finch.build(
+      :get,
+      resolved.base_url <> "/models",
+      Auth.headers(resolved.headers, config.omit_authorization_header)
+    )
+    |> Finch.request(Eva.Finch, receive_timeout: 10_000)
+    |> case do
+      {:ok, %Finch.Response{status: 200, body: body}} -> decode_models(body)
+      {:ok, %Finch.Response{status: status, body: body}} -> {:error, {:http_error, status, body}}
+      {:error, reason} -> {:error, {:transport_error, reason}}
+    end
   end
 
   @impl true
@@ -52,10 +69,12 @@ defmodule Eva.AI.OpenAICompatibleProvider do
       started: false
     }
 
+    resolved = Auth.resolve(state.config)
+
     Finch.build(
       :post,
-      state.config.base_url <> "/chat/completions",
-      [{"content-type", "application/json"}],
+      String.trim_trailing(resolved.base_url, "/") <> "/chat/completions",
+      Auth.headers(resolved, state.config.omit_authorization_header),
       build_req_body(opts, state)
     )
     |> Finch.stream(
@@ -398,4 +417,18 @@ defmodule Eva.AI.OpenAICompatibleProvider do
   defp encode_arguments(args) when is_map(args), do: JSON.encode!(args)
   defp encode_arguments(args) when is_binary(args), do: args
   defp encode_arguments(_), do: "{}"
+
+  defp decode_models(body) do
+    case JSON.decode(body) do
+      {:ok, %{"data" => data}} when is_list(data) ->
+        data = Enum.map(data, & &1["id"]) |> Enum.reject(&is_nil/1)
+        {:ok, data}
+
+      {:ok, _} ->
+        {:error, :unexpected_payload}
+
+      {:error, reason} ->
+        {:error, {:invalid_json, reason}}
+    end
+  end
 end

@@ -12,7 +12,6 @@ defmodule Mix.Tasks.Herd do
   alias Eva.Coding.SessionIndexManager
   alias Eva.Coding.Session, as: CodingSession
   alias Eva.Coding.Session.SessionConfig
-  alias Eva.AI.Config, as: ProviderConfig
 
   @impl true
   def run(args) do
@@ -40,10 +39,7 @@ defmodule Mix.Tasks.Herd do
 
     jsonl_storage = Storage.Jsonl.new(session_index_entry.session_path)
 
-    provider_config = %ProviderConfig.OpenAICompatible{
-      base_url: "http://localhost:1234/v1",
-      provider_name: "lmstudio"
-    }
+    provider_config = Eva.AI.Providers.build(:lmstudio)
 
     config = %SessionConfig{
       cwd: cwd,

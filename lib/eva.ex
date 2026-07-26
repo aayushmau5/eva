@@ -1,5 +1,5 @@
 defmodule Eva do
-  alias Eva.AI.Config, as: ProviderConfig
+  alias Eva.AI.Providers
   alias Eva.Coding.Session, as: CodingSession
   alias Eva.Coding.Session.SessionConfig
   alias Eva.Coding.SessionIndexManager
@@ -16,10 +16,7 @@ defmodule Eva do
 
     storage = %Eva.Agent.Session.Storage.Jsonl{path: session_index_entry.session_path}
 
-    provider_config = %ProviderConfig.OpenAICompatible{
-      base_url: "http://localhost:1234/v1",
-      provider_name: "lmstudio"
-    }
+    provider_config = Providers.build(:lmstudio)
 
     session_config = %SessionConfig{
       cwd: cwd,

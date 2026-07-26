@@ -130,6 +130,11 @@ defmodule Eva.Coding.Session do
     GenServer.call(pid, {:prompt, prompt, streaming_behaviour})
   end
 
+  @spec available_models(pid()) :: {:ok, [String.t()]} | {:error, term()}
+  def available_models(pid) do
+    GenServer.call(pid, :available_models)
+  end
+
   # -- GenServer --
 
   @impl true
@@ -263,6 +268,10 @@ defmodule Eva.Coding.Session do
       state = persist_new_messages(state)
       {:reply, :ok, state}
     end
+  end
+
+  def handle_call(:available_models, %__MODULE__{} = state) do
+    {:reply, OpenAICompatibleProvider.list_models(state.config.provider_config), state}
   end
 
   # -- handle_info --

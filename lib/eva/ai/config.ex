@@ -2,12 +2,16 @@ defmodule Eva.AI.Config do
   use TypedStruct
 
   typedstruct module: RuntimeProviderAuth do
+    @derive {Inspect, except: [:api_key, :headers]}
+
     field :api_key, String.t()
     field :base_url, String.t()
     field :headers, map()
   end
 
   typedstruct module: OpenAICompatible do
+    @derive {Inspect, except: [:api_key, :headers]}
+
     field :api_key, String.t()
     field :base_url, String.t(), enforce: true
     field :headers, map()
