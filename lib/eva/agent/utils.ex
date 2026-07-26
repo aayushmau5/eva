@@ -45,6 +45,8 @@ defmodule Eva.Agent.Utils do
     end)
   end
 
+  def to_struct(_module, json_map) when is_nil(json_map), do: nil
+
   @typep metadata_map :: %{String.t() => String.t()}
 
   @doc """
