@@ -24,13 +24,19 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
       - [ ] Most of the work is already done(Security, Discovery & Connection)
       - [ ] Connections & Creds management
     - [ ] Iroh?
+  - [ ] Splittable Architecture. Harness or API processes can live on another machines. or even tools.
+    - [ ] Tool call to connected Evas.
   - [ ] At what point do we handle external node messages?
     - [ ] Split between:
       - [ ] Providers
       - [ ] Harness
-- [x] Very basic provider(currently LMStudio based API only)
-  - [ ] Handle envs & config
-  - [ ] Switch providers
+- [x] Provider
+  - [x] Opencode go
+  - [x] LMStudio
+  - [x] Completions API
+  - [x] Handle envs & config
+  - [ ] Responses API
+  - [ ] Switch providers at runtime
 - [ ] Storage
   - [x] Directory(sessions/index)
   - [ ] Move to sqlite?

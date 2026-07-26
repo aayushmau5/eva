@@ -270,7 +270,7 @@ defmodule Eva.Coding.Session do
     end
   end
 
-  def handle_call(:available_models, %__MODULE__{} = state) do
+  def handle_call(:available_models, _from, %__MODULE__{} = state) do
     {:reply, OpenAICompatibleProvider.list_models(state.config.provider_config), state}
   end
 

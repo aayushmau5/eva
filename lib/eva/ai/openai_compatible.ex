@@ -32,7 +32,7 @@ defmodule Eva.AI.OpenAICompatibleProvider do
     Finch.build(
       :get,
       resolved.base_url <> "/models",
-      Auth.headers(resolved.headers, config.omit_authorization_header)
+      Auth.headers(resolved, config.omit_authorization_header)
     )
     |> Finch.request(Eva.Finch, receive_timeout: 10_000)
     |> case do
