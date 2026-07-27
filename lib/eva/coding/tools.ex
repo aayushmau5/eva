@@ -65,7 +65,7 @@ defmodule Eva.Coding.Tools do
         else
           raw_path = Map.get(arguments, "path")
           text = File.read!(path)
-          lines = String.split(text, "\n")
+          lines = split_lines_for_counting(text)
           total_lines = length(lines)
 
           # offset is 1-indexed by the caller; convert to 0-indexed
@@ -681,7 +681,7 @@ defmodule Eva.Coding.Tools do
       |> Enum.with_index()
       |> Enum.reduce([], fn {edit, i}, matches ->
         old_text = edit.old_text
-        occurences = count_occurrences(content, old_text)
+        {occurences, match_pos} = count_occurrences(content, old_text)
 
         cond do
           occurences == 0 ->
@@ -691,7 +691,7 @@ defmodule Eva.Coding.Tools do
             raise "Found #{occurences} occurrences of edits[#{i}] in #{path}. Each oldText must be unique. Please provide more context to make it unique."
 
           true ->
-            {start, len} = :binary.match(content, old_text)
+            {start, len} = match_pos
             [{start, start + len, edit.new_text} | matches]
         end
       end)
@@ -703,7 +703,9 @@ defmodule Eva.Coding.Tools do
       matches
       |> Enum.sort_by(fn {start, _, _} -> start end, :desc)
       |> Enum.reduce(content, fn {start, end_pos, new_text}, acc ->
-        String.slice(acc, 0, start) <> new_text <> String.slice(acc, end_pos..-1//1)
+        binary_part(acc, 0, start) <>
+          new_text <>
+          binary_part(acc, end_pos, byte_size(acc) - end_pos)
       end)
 
     if content == new_content do
@@ -713,10 +715,14 @@ defmodule Eva.Coding.Tools do
     {content, new_content}
   end
 
-  defp count_occurrences(content, text, start \\ 0, count \\ 0) do
+  defp count_occurrences(content, text, start \\ 0, count \\ 0, first_match \\ nil) do
     case :binary.match(content, text, [{:scope, {start, byte_size(content) - start}}]) do
-      :nomatch -> count
-      {index, len} -> count_occurrences(content, text, index + len, count + 1)
+      :nomatch ->
+        {count, first_match}
+
+      {index, len} ->
+        first = first_match || {index, len}
+        count_occurrences(content, text, index + len, count + 1, first)
     end
   end
 

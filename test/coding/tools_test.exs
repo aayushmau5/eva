@@ -27,7 +27,7 @@ defmodule Eva.Coding.ToolsTest do
       path = write_file(tmp, "hello.txt", "line1\nline2\nline3\n")
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
 
-      assert Msg.content_text(result.content) == "line1\nline2\nline3\n"
+      assert Msg.content_text(result.content) == "line1\nline2\nline3"
       refute result.details.truncation.truncated
     end
 
@@ -35,7 +35,7 @@ defmodule Eva.Coding.ToolsTest do
       path = write_file(tmp, "hello.txt", "a\nb\nc\nd\ne\n")
       result = CodingTools.read_tool(tmp).executor.(%{"path" => path, "offset" => 3})
 
-      assert Msg.content_text(result.content) == "c\nd\ne\n"
+      assert Msg.content_text(result.content) == "c\nd\ne"
     end
 
     test "reads with limit and shows remaining hint", %{tmp: tmp} do
@@ -169,7 +169,7 @@ defmodule Eva.Coding.ToolsTest do
 
       assert result.details.truncation.truncated == false
       assert result.details.truncation.total_lines == 2
-      assert result.details.truncation.output_bytes == byte_size("hello\nworld\n")
+      assert result.details.truncation.output_bytes == byte_size("hello\nworld")
     end
 
     test "truncates by bytes when collective lines hit byte limit before line limit", %{tmp: tmp} do
