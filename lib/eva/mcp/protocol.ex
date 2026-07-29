@@ -42,6 +42,7 @@ defmodule Eva.MCP.Protocol do
   def tools_list_params(cursor \\ nil)
 
   def tools_list_params(cursor) when is_nil(cursor) do
+    nil
   end
 
   def tools_list_params(cursor) do
