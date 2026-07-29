@@ -13,33 +13,39 @@ defmodule Mix.Tasks.Herd do
   alias Eva.Coding.Session, as: CodingSession
   alias Eva.Coding.Session.SessionConfig
 
+  alias Eva.MCP.Events, as: MCPEvents
+
   @impl true
   def run(args) do
     # Application.ensure_all_started(Eva.Application)
     Mix.Task.run("app.start")
 
     {opts, _remaining, _invalid} =
-      OptionParser.parse(args, strict: [prompt: :string], aliases: [p: :prompt])
+      OptionParser.parse(args,
+        strict: [prompt: :string, mcp: :boolean],
+        aliases: [p: :prompt]
+      )
 
     prompt = Keyword.get(opts, :prompt)
-    run_prompt(prompt)
+    mcp? = Keyword.get(opts, :mcp, false)
+    run_prompt(prompt, mcp?)
   end
 
-  defp run_prompt(prompt) do
+  defp run_prompt(prompt, mcp?) do
     cwd = File.cwd!()
     index_manager = SessionIndexManager.new()
-    model = "nvidia/nemotron-3-nano-4b"
+    model = "deepseek-v4-pro"
 
     session_index_entry =
       SessionIndexManager.prepare_index(index_manager, %{
         cwd: cwd,
         model: model,
-        provider_name: "lmstudio"
+        provider_name: "opencode-go"
       })
 
     jsonl_storage = Storage.Jsonl.new(session_index_entry.session_path)
 
-    provider_config = Eva.AI.Providers.build(:lmstudio)
+    provider_config = Eva.AI.Providers.build(:opencode_go)
 
     config = %SessionConfig{
       cwd: cwd,
@@ -50,6 +56,15 @@ defmodule Mix.Tasks.Herd do
     }
 
     {:ok, coding_session_pid} = CodingSession.start_link(%{config: config})
+
+    if mcp? do
+      IO.puts([IO.ANSI.faint(), "… discovering MCP tools", IO.ANSI.reset()])
+
+      case CodingSession.prompt(coding_session_pid, "do nothing") do
+        :ok -> receive_stream()
+        {:error, reason} -> IO.puts(:stderr, reason)
+      end
+    end
 
     case CodingSession.prompt(coding_session_pid, prompt) do
       :ok -> receive_stream()
@@ -74,8 +89,108 @@ defmodule Mix.Tasks.Herd do
       %Events.AgentEnd{messages: _messages} ->
         IO.puts("")
 
-      _other ->
+      %Events.ToolExecutionStart{} = event ->
+        IO.puts([
+          IO.ANSI.cyan(),
+          "  ⚡ ",
+          IO.ANSI.reset(),
+          event.tool_name,
+          format_arg_summary(event.args)
+        ])
+
+        receive_stream()
+
+      %Events.ToolExecutionEnd{} = event ->
+        icon =
+          if event.is_error,
+            do: [IO.ANSI.red(), "  ✗"],
+            else: [IO.ANSI.green(), "  ✓"]
+
+        IO.puts([icon, IO.ANSI.reset(), " ", event.tool_name])
+        receive_stream()
+
+      %MCPEvents.ServerConnected{} = message ->
+        IO.puts([
+          IO.ANSI.cyan(),
+          "  ● ",
+          IO.ANSI.reset(),
+          message.server_name,
+          IO.ANSI.faint(),
+          " v#{message.server_version}",
+          IO.ANSI.reset()
+        ])
+
+        receive_stream()
+
+      %MCPEvents.ServerError{} = message ->
+        IO.puts([
+          :stderr,
+          IO.ANSI.yellow(),
+          "  ⚠ ",
+          IO.ANSI.reset(),
+          message.server_name,
+          ": ",
+          message.error
+        ])
+
+        receive_stream()
+
+      %MCPEvents.ToolsDiscovered{} = message ->
+        IO.puts([
+          IO.ANSI.faint(),
+          "  ◆ ",
+          IO.ANSI.reset(),
+          message.server_name,
+          IO.ANSI.faint(),
+          " (#{length(message.tools)} tools)",
+          IO.ANSI.reset()
+        ])
+
+        receive_stream()
+
+      %MCPEvents.ServerLog{} = message ->
+        IO.puts([
+          IO.ANSI.faint(),
+          "  [",
+          message.server_name,
+          "] ",
+          message.message,
+          IO.ANSI.reset()
+        ])
+
+        receive_stream()
+
+      %Events.ToolExecutionUpdate{} = _event ->
+        receive_stream()
+
+      other ->
+        IO.puts("")
+        IO.puts([
+          IO.ANSI.faint(),
+          "  Unhandled: ",
+          Atom.to_string(other.__struct__),
+          IO.ANSI.reset()
+        ])
+
         receive_stream()
     end
+  end
+
+  defp format_arg_summary(args) when map_size(args) == 0, do: ""
+
+  defp format_arg_summary(%{command: cmd}) do
+    [IO.ANSI.faint(), " ", String.slice(cmd, 0, 80), IO.ANSI.reset()]
+  end
+
+  defp format_arg_summary(%{filePath: path}) do
+    [IO.ANSI.faint(), " ", Path.basename(path), IO.ANSI.reset()]
+  end
+
+  defp format_arg_summary(%{pattern: pat}) do
+    [IO.ANSI.faint(), " ", pat, IO.ANSI.reset()]
+  end
+
+  defp format_arg_summary(args) do
+    [IO.ANSI.faint(), " (", args |> Map.keys() |> Enum.join(", "), ")", IO.ANSI.reset()]
   end
 end

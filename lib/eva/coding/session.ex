@@ -4,6 +4,7 @@ defmodule Eva.Coding.Session do
   """
   use GenServer
   use TypedStruct
+  require Logger
 
   alias Eva.AI.OpenAICompatibleProvider
   alias Eva.AI.Config, as: ProviderConfig
@@ -21,6 +22,8 @@ defmodule Eva.Coding.Session do
   alias Eva.Coding.SessionName
   alias Eva.Coding.ProjectContext
 
+  alias Eva.MCP
+
   @harness_events [
     AgentEvents.AgentStart,
     AgentEvents.AgentEnd,
@@ -33,6 +36,8 @@ defmodule Eva.Coding.Session do
     AgentEvents.ToolExecutionUpdate,
     AgentEvents.ToolExecutionEnd
   ]
+
+  @mcp_events MCP.Events.modules()
 
   # Config passed during init
   typedstruct module: SessionConfig do
@@ -71,6 +76,9 @@ defmodule Eva.Coding.Session do
     field :config, SessionConfig.t()
     field :provider_config, ProviderConfig.t()
     field :auto_name_attempted, boolean(), default: false
+    field :base_tools, [AgentTools.AgentTool.t()], default: []
+    field :mcp_servers, [MCP.Config.t()], default: []
+    field :mcp_state, map(), default: %{}
   end
 
   # -- Public API --
@@ -168,6 +176,14 @@ defmodule Eva.Coding.Session do
         do: load_resources(%Eva.Coding.Resources{cwd: config.cwd}, config.context_files),
         else: config.resource_paths
 
+    # MCP stuff
+    # TODO: bubble up mcp_diagnostics as a separate entity
+
+    resource = config.resource_paths || %Eva.Coding.Resources{cwd: config.cwd}
+    {mcp_configs, _mcp_diagnostics} = MCP.Config.parse(resource)
+
+    mcp_state = subscribe_mcp_servers(mcp_configs)
+
     system_prompt =
       if is_nil(config.system_prompt) or config.system_prompt != "",
         do:
@@ -210,7 +226,10 @@ defmodule Eva.Coding.Session do
          resource_diagnostics: resources.diagnostics,
          command_registry: [],
          pending_initial_entries: pending_initial_entries,
-         config: %SessionConfig{config | system_prompt: system_prompt}
+         config: %SessionConfig{config | system_prompt: system_prompt},
+         base_tools: tools,
+         mcp_servers: mcp_configs,
+         mcp_state: mcp_state
      }}
   end
 
@@ -264,6 +283,7 @@ defmodule Eva.Coding.Session do
       end
     else
       prompt = %Messages.UserMessage{content: prompt}
+      :ok = refresh_tools(state)
       {:ok, _harness_state} = Harness.prompt(state.harness_pid, prompt)
       state = persist_new_messages(state)
       {:reply, :ok, state}
@@ -303,6 +323,11 @@ defmodule Eva.Coding.Session do
   end
 
   def handle_info(%{__struct__: mod} = event, state) when mod in @harness_events do
+    forward_event(state, event)
+    {:noreply, state}
+  end
+
+  def handle_info(%{__struct__: mod} = event, state) when mod in @mcp_events do
     forward_event(state, event)
     {:noreply, state}
   end
@@ -442,6 +467,30 @@ defmodule Eva.Coding.Session do
     %{state | persisted_count: length(messages)}
   end
 
+  # Rebuilt at every prompt rather than kept in sync from events, because
+  # `Harness.update_tools/2` is inert mid-run — `Loop` takes `tools:` by value
+  # at spawn and freezes `tool_by_name`. A prompt is therefore the only moment
+  # a tool list change can take effect, and doing it here is also what gets
+  # MCP tools into the *first* prompt of a session.
+  defp refresh_tools(%__MODULE__{} = state) do
+    {:ok, _harness_state} =
+      Harness.update_tools(state.harness_pid, state.base_tools ++ mcp_tools(state))
+
+    :ok
+  end
+
+  # Pulled live from each client rather than from `mcp_state`, so a server that
+  # connected since the last prompt is picked up without depending on an event
+  # having been processed. A client that is down simply contributes nothing.
+  def mcp_tools(%__MODULE__{mcp_servers: mcp_servers}) do
+    Enum.flat_map(mcp_servers, fn mcp_config ->
+      case MCP.Client.whereis(mcp_config) do
+        nil -> []
+        pid -> MCP.ToolAdapter.to_agent_tools(mcp_config, MCP.Client.list_tools(pid))
+      end
+    end)
+  end
+
   # Send events to listener_pid
   # `send` based. To be refactored into PubSub
   defp forward_event(state, event) do
@@ -505,5 +554,25 @@ defmodule Eva.Coding.Session do
       not state.config.defer_index? and
       not is_nil(state.config.session_id) and
       state.config.session_id != ""
+  end
+
+  # Order matters. Joining before starting means a cold client's
+  # `ServerConnected` can't slip through the gap. The snapshot then covers the
+  # rest. Nothing here waits for a connection. The harness is spawned with built-in
+  # tools only; MCP tools are merged in at prompt time.
+  @spec subscribe_mcp_servers([MCP.Config.t()]) :: %{String.t() => MCP.Client.snapshot()}
+  def subscribe_mcp_servers(mcp_configs) do
+    Enum.reduce(mcp_configs, %{}, fn mcp_config, acc ->
+      :pg.join(Eva.PG, {:mcp, mcp_config.scope_dir, mcp_config.name}, self())
+
+      case MCP.Supervisor.ensure_started(mcp_config) do
+        {:ok, client_pid} ->
+          Map.put(acc, mcp_config.name, MCP.Client.snapshot(client_pid))
+
+        {:error, reason} ->
+          Logger.warning("MCP server #{mcp_config.name} failed to start: #{inspect(reason)}")
+          acc
+      end
+    end)
   end
 end

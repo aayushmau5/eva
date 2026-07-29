@@ -14,6 +14,7 @@ defmodule Eva.MCP.Supervisor do
     DynamicSupervisor.init(strategy: :one_for_one, max_restarts: 10, max_seconds: 60)
   end
 
+  @spec ensure_started(Config.t()) :: {:ok, pid()} | {:error, term()}
   def ensure_started(%Config{} = config) do
     # start_child calls Client GenServer with the config
     case DynamicSupervisor.start_child(__MODULE__, {Client, config}) do

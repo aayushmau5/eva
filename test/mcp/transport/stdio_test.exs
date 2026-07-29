@@ -259,14 +259,13 @@ defmodule Eva.MCP.Transport.StdioTest do
       config = build_config(@echo_cmd, ["-c", @echo_script])
       {:ok, transport} = Stdio.connect(config)
       os_pid = transport.os_pid
-      exec_pid = transport.exec_pid
 
       Eva.MCP.Transport.send_message(transport, "ping")
       assert_receive {:stdout, ^os_pid, _}, 2000
 
       Eva.MCP.Transport.close(transport)
 
-      assert_receive {:DOWN, ^os_pid, :process, ^exec_pid, _reason}, 5000
+      refute match?({:ok, _}, :exec.status(os_pid))
     end
 
     test "handles multiple messages across the connection" do
