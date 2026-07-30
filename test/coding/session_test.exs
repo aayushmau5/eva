@@ -1,50 +1,8 @@
 defmodule Eva.Coding.SessionTest do
   use ExUnit.Case, async: false
 
-  alias Eva.Agent.Tools
   alias Eva.Coding.Session
-  alias Eva.MCP.{Config, Events}
-
-  defmodule MockMCPClient do
-    use GenServer
-
-    def start_link({config, tools}) do
-      GenServer.start_link(__MODULE__, {config, tools})
-    end
-
-    @impl true
-    def init({config, tools}) do
-      Registry.register(Eva.MCP.Registry, {config.scope_dir, config.name}, nil)
-      {:ok, tools}
-    end
-
-    @impl true
-    def handle_call(:list_tools, _from, tools) do
-      {:reply, tools, tools}
-    end
-  end
-
-  defp unique_name, do: "test_#{System.unique_integer([:positive])}"
-
-  defp build_mcp_config(attrs \\ []) do
-    struct!(
-      Config,
-      Keyword.merge(
-        [
-          scope_dir: :global,
-          name: unique_name(),
-          type: :stdio,
-          enabled: true,
-          config: %Config.Stdio{command: "echo", args: []}
-        ],
-        attrs
-      )
-    )
-  end
-
-  defp register_mock_client(config, tools) do
-    {:ok, _pid} = MockMCPClient.start_link({config, tools})
-  end
+  alias Eva.MCP.Events
 
   defp build_session_config(attrs \\ []) do
     %Session.SessionConfig{
@@ -56,10 +14,14 @@ defmodule Eva.Coding.SessionTest do
     }
   end
 
+  # Cleaned up because `unique_integer/0` restarts from the same values on each VM
+  # boot: a leftover transcript would otherwise be replayed into the next run's test.
   defp fake_storage do
-    Eva.Agent.Session.Storage.Jsonl.new(
-      Path.join(System.tmp_dir!(), "session_test_#{:erlang.unique_integer()}.jsonl")
-    )
+    path =
+      Path.join(System.tmp_dir!(), "session_test_#{System.unique_integer([:positive])}.jsonl")
+
+    on_exit(fn -> File.rm_rf!(path) end)
+    Eva.Agent.Session.Storage.Jsonl.new(path)
   end
 
   defp fake_provider_config do
@@ -69,68 +31,62 @@ defmodule Eva.Coding.SessionTest do
     }
   end
 
-  describe "mcp_tools/1" do
-    test "returns empty list when there are no MCP servers" do
-      state = build_state(mcp_servers: [])
-      assert Session.mcp_tools(state) == []
+  describe "append_mcp_toggle/3" do
+    alias Eva.Agent.Session.State, as: SessionState
+    alias Eva.Agent.Session.Storage
+
+    test "writes an entry that replays back as an override" do
+      config = build_session_config()
+      state = build_state(config: config)
+
+      Session.append_mcp_toggle(state, "ctx7", false)
+
+      entries = Storage.read_all(config.storage)
+      leaf = SessionState.latest_leaf_entry(entries)
+
+      overrides =
+        entries |> SessionState.from_entries(leaf.entry_id) |> SessionState.mcp_overrides()
+
+      assert overrides == %{"ctx7" => false}
     end
 
-    test "returns empty list when no MCP clients are running" do
-      config = build_mcp_config()
-      state = build_state(mcp_servers: [config])
-      assert Session.mcp_tools(state) == []
+    # The leaf is what puts the entry on the branch replayed at resume — without it
+    # `path_to_entry/2` walks straight past the toggle.
+    test "keeps successive toggles on the replayed branch, last one winning" do
+      config = build_session_config()
+
+      state =
+        build_state(config: config)
+        |> Session.append_mcp_toggle("ctx7", false)
+        |> Session.append_mcp_toggle("other", false)
+        |> Session.append_mcp_toggle("ctx7", true)
+
+      entries = Storage.read_all(config.storage)
+      leaf = SessionState.latest_leaf_entry(entries)
+
+      overrides =
+        entries |> SessionState.from_entries(leaf.entry_id) |> SessionState.mcp_overrides()
+
+      assert overrides == %{"ctx7" => true, "other" => false}
+      assert state.last_parent_id == leaf.entry_id
     end
 
-    test "returns adapted tools from a running MCP client" do
-      config = build_mcp_config()
+    test "flushes pending initial entries so the toggle has a parent in the file" do
+      config = build_session_config()
+      info = Eva.Agent.Session.Entries.SessionInfo.new(%{cwd: "/tmp"})
 
-      mcp_tools = [
-        %{name: "search", description: "search the web", input_schema: %{type: "object"}}
-      ]
+      state =
+        build_state(config: config, pending_initial_entries: [info], last_parent_id: info.id)
 
-      register_mock_client(config, mcp_tools)
+      state = Session.append_mcp_toggle(state, "ctx7", false)
 
-      state = build_state(mcp_servers: [config])
-      result = Session.mcp_tools(state)
+      assert state.pending_initial_entries == []
 
-      assert length(result) == 1
-      tool = List.first(result)
-      assert %Tools.AgentTool{} = tool
-      assert tool.name == Eva.MCP.ToolAdapter.tool_name(config.name, "search")
-      assert tool.description == "search the web"
-      assert tool.input_schema == %{type: "object"}
-    end
+      entries = Storage.read_all(config.storage)
+      assert Enum.any?(entries, &(&1.id == info.id))
 
-    test "returns tools from multiple running MCP clients" do
-      config_a = build_mcp_config(name: "server_a")
-      config_b = build_mcp_config(name: "server_b")
-
-      tools_a = [%{name: "tool_a", description: "a", input_schema: %{}}]
-      tools_b = [%{name: "tool_b", description: "b", input_schema: %{}}]
-
-      register_mock_client(config_a, tools_a)
-      register_mock_client(config_b, tools_b)
-
-      state = build_state(mcp_servers: [config_a, config_b])
-      result = Session.mcp_tools(state)
-
-      assert length(result) == 2
-      names = Enum.map(result, & &1.name)
-      assert Eva.MCP.ToolAdapter.tool_name("server_a", "tool_a") in names
-      assert Eva.MCP.ToolAdapter.tool_name("server_b", "tool_b") in names
-    end
-
-    test "skips clients that are not registered, returns tools from those that are" do
-      config_dead = build_mcp_config(name: "dead_server")
-      config_alive = build_mcp_config(name: "alive_server")
-      tools = [%{name: "live_tool", description: "alive", input_schema: %{}}]
-      register_mock_client(config_alive, tools)
-
-      state = build_state(mcp_servers: [config_dead, config_alive])
-      result = Session.mcp_tools(state)
-
-      assert length(result) == 1
-      assert List.first(result).name == Eva.MCP.ToolAdapter.tool_name("alive_server", "live_tool")
+      toggle = Enum.find(entries, &(&1.type == "custom"))
+      assert toggle.parent_id == info.id
     end
   end
 
@@ -297,61 +253,6 @@ defmodule Eva.Coding.SessionTest do
     end
   end
 
-  describe "subscribe_mcp_servers/1" do
-    test "returns empty map for empty config list" do
-      assert Session.subscribe_mcp_servers([]) == %{}
-    end
-
-    test "returns snapshot for successfully started client" do
-      tmp = mktmp()
-
-      write_mcp_json(tmp, "mcp.json", %{
-        "mcpServers" => %{
-          "echo_server" => %{
-            "type" => "stdio",
-            "command" => "echo",
-            "args" => ["hello"]
-          }
-        }
-      })
-
-      resources = %Eva.Coding.Resources{root: tmp, cwd: tmp}
-      {mcp_configs, _diagnostics} = Config.parse(resources)
-
-      result = Session.subscribe_mcp_servers(mcp_configs)
-
-      assert is_map(result)
-      assert Map.has_key?(result, "echo_server")
-
-      snapshot = Map.get(result, "echo_server")
-      assert is_map(snapshot)
-      assert snapshot.server_name == "echo_server"
-      assert snapshot.scope_dir == :global
-      assert snapshot.status in [:connecting, :connected, :failed]
-    end
-
-    test "handles invalid commands — client starts but status reflects failure" do
-      tmp = mktmp()
-
-      write_mcp_json(tmp, "mcp.json", %{
-        "mcpServers" => %{
-          "bad_server" => %{
-            "type" => "stdio",
-            "command" => "nonexistent_command_xyz_testing"
-          }
-        }
-      })
-
-      resources = %Eva.Coding.Resources{root: tmp, cwd: tmp}
-      {mcp_configs, _diagnostics} = Config.parse(resources)
-
-      result = Session.subscribe_mcp_servers(mcp_configs)
-
-      assert is_map(result)
-      assert Map.has_key?(result, "bad_server")
-    end
-  end
-
   defp build_state(attrs) do
     config = build_session_config()
 
@@ -369,24 +270,12 @@ defmodule Eva.Coding.SessionTest do
           resource_diagnostics: [],
           command_registry: [],
           pending_initial_entries: [],
+          mcp: %Eva.MCP.SessionServers{},
           config: config,
           provider_config: config.provider_config
         ],
         attrs
       )
     )
-  end
-
-  defp mktmp do
-    dir = Path.join(System.tmp_dir!(), "eva_session_test_#{System.unique_integer()}")
-    File.mkdir_p!(dir)
-    on_exit(fn -> File.rm_rf!(dir) end)
-    dir
-  end
-
-  defp write_mcp_json(dir, filename, content) do
-    path = Path.join(dir, filename)
-    json = JSON.encode_to_iodata!(content) |> IO.iodata_to_binary()
-    File.write!(path, json)
   end
 end

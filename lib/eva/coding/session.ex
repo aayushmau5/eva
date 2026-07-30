@@ -4,7 +4,6 @@ defmodule Eva.Coding.Session do
   """
   use GenServer
   use TypedStruct
-  require Logger
 
   alias Eva.AI.OpenAICompatibleProvider
   alias Eva.AI.Config, as: ProviderConfig
@@ -37,6 +36,7 @@ defmodule Eva.Coding.Session do
     AgentEvents.ToolExecutionEnd
   ]
 
+  @mcp_namespace "mcp"
   @mcp_events MCP.Events.modules()
 
   # Config passed during init
@@ -77,8 +77,7 @@ defmodule Eva.Coding.Session do
     field :provider_config, ProviderConfig.t()
     field :auto_name_attempted, boolean(), default: false
     field :base_tools, [AgentTools.AgentTool.t()], default: []
-    field :mcp_servers, [MCP.Config.t()], default: []
-    field :mcp_state, map(), default: %{}
+    field :mcp, MCP.SessionServers.t()
   end
 
   # -- Public API --
@@ -143,6 +142,26 @@ defmodule Eva.Coding.Session do
     GenServer.call(pid, :available_models)
   end
 
+  @spec list_mcp_servers(pid()) :: [MCP.SessionServers.server_info()]
+  def list_mcp_servers(pid) do
+    GenServer.call(pid, :list_mcp_servers)
+  end
+
+  @doc """
+  Enables or disables an MCP server.
+
+  `:session` records the choice in this session's transcript, so it survives a resume
+  and leaves other sessions alone. `:persist` writes `enabled` back to the `mcp.json`
+  the server came from and clears any session override, so every *new* session picks
+  it up — sessions already running keep what they have.
+  """
+  @spec set_mcp_enabled(pid(), String.t(), boolean(), :session | :persist) ::
+          {:ok, [MCP.SessionServers.server_info()]} | {:error, term()}
+  def set_mcp_enabled(pid, server_name, enabled?, scope \\ :session)
+      when is_boolean(enabled?) and scope in [:session, :persist] do
+    GenServer.call(pid, {:set_mcp_enabled, server_name, enabled?, scope})
+  end
+
   # -- GenServer --
 
   @impl true
@@ -176,13 +195,8 @@ defmodule Eva.Coding.Session do
         do: load_resources(%Eva.Coding.Resources{cwd: config.cwd}, config.context_files),
         else: config.resource_paths
 
-    # MCP stuff
-    # TODO: bubble up mcp_diagnostics as a separate entity
-
-    resource = config.resource_paths || %Eva.Coding.Resources{cwd: config.cwd}
-    {mcp_configs, _mcp_diagnostics} = MCP.Config.parse(resource)
-
-    mcp_state = subscribe_mcp_servers(mcp_configs)
+    mcp =
+      MCP.SessionServers.new(session_resources(config), SessionState.mcp_overrides(session_state))
 
     system_prompt =
       if is_nil(config.system_prompt) or config.system_prompt != "",
@@ -228,8 +242,7 @@ defmodule Eva.Coding.Session do
          pending_initial_entries: pending_initial_entries,
          config: %SessionConfig{config | system_prompt: system_prompt},
          base_tools: tools,
-         mcp_servers: mcp_configs,
-         mcp_state: mcp_state
+         mcp: mcp
      }}
   end
 
@@ -294,6 +307,26 @@ defmodule Eva.Coding.Session do
     {:reply, OpenAICompatibleProvider.list_models(state.config.provider_config), state}
   end
 
+  def handle_call(:list_mcp_servers, _from, %__MODULE__{} = state) do
+    {:reply, MCP.SessionServers.list(state.mcp), state}
+  end
+
+  def handle_call({:set_mcp_enabled, server_name, enabled?, scope}, _from, %__MODULE__{} = state) do
+    case MCP.SessionServers.set_enabled(state.mcp, server_name, enabled?, scope) do
+      {:ok, mcp} ->
+        state = %__MODULE__{state | mcp: mcp}
+        # The transcript is the session's to write; `MCP.SessionServers` owns the config
+        # and the clients, not our storage.
+        state =
+          if scope == :session, do: append_mcp_toggle(state, server_name, enabled?), else: state
+
+        {:reply, {:ok, MCP.SessionServers.list(mcp)}, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
   # -- handle_info --
   @impl true
   def handle_info(%AgentEvents.MessageEnd{} = event, state) do
@@ -327,7 +360,8 @@ defmodule Eva.Coding.Session do
     {:noreply, state}
   end
 
-  def handle_info(%{__struct__: mod} = event, state) when mod in @mcp_events do
+  def handle_info(%{__struct__: mod} = event, %__MODULE__{} = state) when mod in @mcp_events do
+    state = %__MODULE__{state | mcp: MCP.SessionServers.apply_event(state.mcp, event)}
     forward_event(state, event)
     {:noreply, state}
   end
@@ -344,6 +378,30 @@ defmodule Eva.Coding.Session do
     end
 
     {:noreply, state}
+  end
+
+  @doc """
+  Records a session-scoped MCP enable/disable in the transcript.
+
+  Written as a `Custom` entry. `data` keys are strings so an entry built here and one
+  replayed from jsonl are indistinguishable.
+  """
+  @spec append_mcp_toggle(t(), String.t(), boolean()) :: t()
+  def append_mcp_toggle(%__MODULE__{} = state, server_name, enabled) do
+    state = write_pending_initial_entries(state)
+
+    entry =
+      Entries.Custom.new(%{
+        parent_id: state.last_parent_id,
+        namespace: @mcp_namespace,
+        data: %{"server_name" => server_name, "enabled" => enabled}
+      })
+
+    :ok = Storage.append(state.config.storage, entry)
+    leaf = Entries.Leaf.new(%{parent_id: entry.id, entry_id: entry.id})
+    :ok = Storage.append(state.config.storage, leaf)
+
+    %__MODULE__{state | last_parent_id: entry.id}
   end
 
   # -- Private --
@@ -394,6 +452,10 @@ defmodule Eva.Coding.Session do
       not is_nil(state.entries) and length(state.entries) > 0 -> List.last(state.entries).id
       true -> nil
     end
+  end
+
+  defp session_resources(%SessionConfig{} = config) do
+    config.resource_paths || %Eva.Coding.Resources{cwd: config.cwd}
   end
 
   defp load_resources(resource_paths, explicit_context_files) do
@@ -474,22 +536,16 @@ defmodule Eva.Coding.Session do
   # MCP tools into the *first* prompt of a session.
   defp refresh_tools(%__MODULE__{} = state) do
     {:ok, _harness_state} =
-      Harness.update_tools(state.harness_pid, state.base_tools ++ mcp_tools(state))
+      Harness.update_tools(
+        state.harness_pid,
+        state.base_tools ++ MCP.SessionServers.tools(state.mcp)
+      )
 
     :ok
   end
 
-  # Pulled live from each client rather than from `mcp_state`, so a server that
-  # connected since the last prompt is picked up without depending on an event
-  # having been processed. A client that is down simply contributes nothing.
-  def mcp_tools(%__MODULE__{mcp_servers: mcp_servers}) do
-    Enum.flat_map(mcp_servers, fn mcp_config ->
-      case MCP.Client.whereis(mcp_config) do
-        nil -> []
-        pid -> MCP.ToolAdapter.to_agent_tools(mcp_config, MCP.Client.list_tools(pid))
-      end
-    end)
-  end
+  # A session-scoped toggle wins over the config file; with no toggle recorded,
+  # the file decides.
 
   # Send events to listener_pid
   # `send` based. To be refactored into PubSub
@@ -499,13 +555,13 @@ defmodule Eva.Coding.Session do
     end
   end
 
-  defp write_pending_initial_entries(state) do
+  defp write_pending_initial_entries(%__MODULE__{} = state) do
     pending_entries = state.pending_initial_entries
 
     if length(pending_entries) != 0 do
       Enum.each(pending_entries, fn entry -> :ok = Storage.append(state.config.storage, entry) end)
 
-      %{state | pending_initial_entries: []}
+      %__MODULE__{state | pending_initial_entries: []}
     else
       state
     end
@@ -554,25 +610,5 @@ defmodule Eva.Coding.Session do
       not state.config.defer_index? and
       not is_nil(state.config.session_id) and
       state.config.session_id != ""
-  end
-
-  # Order matters. Joining before starting means a cold client's
-  # `ServerConnected` can't slip through the gap. The snapshot then covers the
-  # rest. Nothing here waits for a connection. The harness is spawned with built-in
-  # tools only; MCP tools are merged in at prompt time.
-  @spec subscribe_mcp_servers([MCP.Config.t()]) :: %{String.t() => MCP.Client.snapshot()}
-  def subscribe_mcp_servers(mcp_configs) do
-    Enum.reduce(mcp_configs, %{}, fn mcp_config, acc ->
-      :pg.join(Eva.PG, {:mcp, mcp_config.scope_dir, mcp_config.name}, self())
-
-      case MCP.Supervisor.ensure_started(mcp_config) do
-        {:ok, client_pid} ->
-          Map.put(acc, mcp_config.name, MCP.Client.snapshot(client_pid))
-
-        {:error, reason} ->
-          Logger.warning("MCP server #{mcp_config.name} failed to start: #{inspect(reason)}")
-          acc
-      end
-    end)
   end
 end

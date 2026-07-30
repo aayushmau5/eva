@@ -22,10 +22,34 @@ defmodule Eva.MCP.Config do
     field :headers, map()
   end
 
+  @spec config_path(Resources.t(), :global | String.t()) :: String.t()
+  def config_path(%Resources{root: root}, :global), do: Path.join(root, "mcp.json")
+  def config_path(%Resources{}, cwd), do: Path.join([cwd, ".eva", "mcp.json"])
+
+  @doc """
+  Flips `enabled` for a server in the `mcp.json` it was defined in.
+
+  Only that one key is touched, but the whole file is re-encoded, so the user's
+  key order and formatting do not survive — `:json.format/1` at least keeps the
+  result readable, which matters for a file people hand-edit. The write lands on
+  a sibling temp file first so a failure part-way through can never leave a
+  truncated MCP config behind.
+  """
+  @spec set_enabled(Resources.t(), t(), boolean()) :: {:ok, t()} | {:error, term()}
+  def set_enabled(%Resources{} = resources, %__MODULE__{} = config, flag) do
+    path = config_path(resources, config.scope_dir)
+
+    with {:ok, json} <- read_for_write(path),
+         {:ok, server} <- fetch_server(json, config.name),
+         :ok <- write(path, put_in(json, ["mcpServers", config.name], enable(server, flag))) do
+      {:ok, %__MODULE__{config | enabled: flag}}
+    end
+  end
+
   @spec parse(Resources.t()) :: {[t()], [JSON.decode_error_reason()]}
-  def parse(%Resources{cwd: cwd, root: root}) do
-    global_mcp_path = Path.join(root, "mcp.json")
-    project_mcp_path = Path.join([cwd, ".eva", "mcp.json"])
+  def parse(%Resources{cwd: cwd} = resources) do
+    global_mcp_path = config_path(resources, :global)
+    project_mcp_path = config_path(resources, cwd)
 
     global_mcp_config = read(global_mcp_path)
     project_mcp_config = read(project_mcp_path)
@@ -36,8 +60,7 @@ defmodule Eva.MCP.Config do
     {project_mcps, project_diagnostics} =
       parse_mcp_config_from_json(project_mcp_config, project_mcp_path, cwd)
 
-    {dedup_and_merge(global_mcps, project_mcps) |> Enum.filter(& &1.enabled),
-     global_diagnostics ++ project_diagnostics}
+    {dedup_and_merge(global_mcps, project_mcps), global_diagnostics ++ project_diagnostics}
   end
 
   defp read(path) do
@@ -134,5 +157,34 @@ defmodule Eva.MCP.Config do
     global_mcps
     |> Enum.reject(&MapSet.member?(project_names, &1.name))
     |> Enum.concat(project_mcps)
+  end
+
+  defp read_for_write(path) do
+    case read(path) do
+      nil -> {:error, :not_found}
+      {:ok, json} -> {:ok, json}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp fetch_server(%{"mcpServers" => servers}, name) when is_map(servers) do
+    case Map.get(servers, name) do
+      server when is_map(server) -> {:ok, server}
+      _ -> {:error, :not_found}
+    end
+  end
+
+  defp fetch_server(_json, _name), do: {:error, :not_found}
+
+  defp enable(server, flag), do: Map.put(server, "enabled", flag)
+
+  defp write(path, json) do
+    tmp = path <> ".tmp"
+
+    with :ok <- path |> Path.dirname() |> File.mkdir_p(),
+         # `:json.format/1` already ends the document with a newline.
+         :ok <- File.write(tmp, :json.format(json)) do
+      File.rename(tmp, path)
+    end
   end
 end

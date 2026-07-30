@@ -166,7 +166,9 @@ defmodule Eva.MCP.ConfigTest do
       assert names == ["global-server", "project-server"]
     end
 
-    test "filters out disabled servers" do
+    # Disabled servers are returned, not dropped — a frontend has to be able to list
+    # and re-enable them. Honouring `enabled` is the caller's job.
+    test "flags disabled servers instead of dropping them" do
       tmp = mktmp()
 
       write_mcp_json(tmp, "mcp.json", %{
@@ -186,10 +188,9 @@ defmodule Eva.MCP.ConfigTest do
       resources = %Resources{root: tmp, cwd: tmp}
 
       {mcps, _diagnostics} = Config.parse(resources)
-      assert length(mcps) == 1
 
-      mcp = List.first(mcps)
-      assert mcp.name == "enabled-server"
+      assert %{"enabled-server" => true, "disabled-server" => false} =
+               Map.new(mcps, &{&1.name, &1.enabled})
     end
 
     test "returns diagnostics for JSON decode errors" do
@@ -205,9 +206,13 @@ defmodule Eva.MCP.ConfigTest do
     end
   end
 
+  # `System.unique_integer/0` restarts from the same values on each VM boot, so
+  # without the cleanup a run inherits whatever the previous run left in the dir
+  # it happens to draw.
   defp mktmp do
-    dir = Path.join(System.tmp_dir!(), "eva_config_test_#{System.unique_integer()}")
+    dir = Path.join(System.tmp_dir!(), "eva_config_test_#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
     dir
   end
 

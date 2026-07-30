@@ -107,6 +107,18 @@ defmodule Eva.Agent.Session.State do
     end)
   end
 
+  @spec mcp_overrides(t()) :: %{String.t() => boolean()}
+  def mcp_overrides(%__MODULE__{custom_entries: entries}) do
+    Enum.reduce(entries, %{}, fn
+      %Entries.Custom{namespace: "mcp", data: %{"server_name" => name, "enabled" => enabled}}, acc
+      when is_binary(name) and is_boolean(enabled) ->
+        Map.put(acc, name, enabled)
+
+      _entry, acc ->
+        acc
+    end)
+  end
+
   # Replaces the first matching entry in message_rows whose id is in
   # compaction.replaces_entry_ids with a summary UserMessage. All subsequent
   # replaced entries are dropped. If no replaced entry is found, the summary
