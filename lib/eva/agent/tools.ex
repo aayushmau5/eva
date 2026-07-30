@@ -4,6 +4,7 @@ defmodule Eva.Agent.Tools do
   """
 
   alias Eva.Agent.Messages
+  alias Eva.Agent.Events
 
   defmodule AgentToolResult do
     @moduledoc """
@@ -28,7 +29,7 @@ defmodule Eva.Agent.Tools do
       * `name` — unique tool name exposed to the model.
       * `description` — description the model uses to decide when to call this tool.
       * `input_schema` — JSON Schema for the tool's arguments.
-      * `executor` — function `(arguments -> AgentToolResult)`. Called to
+      * `executor` — function `(arguments, context -> AgentToolResult)`. Called to
         execute the tool.
       * `prompt_snippet` — optional text injected into the system prompt to guide
         the model on when to use this tool.
@@ -48,6 +49,19 @@ defmodule Eva.Agent.Tools do
     end
   end
 
+  defmodule ExecContext do
+    @moduledoc """
+    Extra context provided to tool executor for progress tracking.
+    """
+    use TypedStruct
+
+    typedstruct do
+      field :tool_call_id, String.t()
+      field :tool_name, String.t()
+      field :harness_pid, pid()
+    end
+  end
+
   @type tool_call :: ToolCall.t()
   @type tool_result :: AgentToolResult.t()
   @type tool :: AgentTool.t()
@@ -57,8 +71,23 @@ defmodule Eva.Agent.Tools do
 
   Delegates to the tool's `executor` function.
   """
-  @spec execute(AgentTool.t(), map()) :: AgentToolResult.t()
-  def execute(%AgentTool{executor: executor}, arguments) do
-    executor.(arguments)
+  @spec execute(AgentTool.t(), map(), ExecContext.t()) :: AgentToolResult.t()
+  def execute(%AgentTool{executor: executor}, arguments, context) do
+    executor.(arguments, context)
+  end
+
+  # This bypasses the loop process.
+  # It is deliberate because this changes nothing on the transcript.
+  @doc """
+  Sends a `ToolExecutionUpdate` message to the harness directly.
+  """
+  @spec report_update(ExecContext.t(), AgentToolResult.t()) :: Events.ToolExecutionUpdate.t()
+  def report_update(ctx, result) do
+    %Events.ToolExecutionUpdate{
+      tool_call_id: ctx.tool_call_id,
+      tool_name: ctx.tool_name,
+      partial_result: result
+    }
+    |> then(&send(ctx.harness_pid, &1))
   end
 end

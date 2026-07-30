@@ -41,7 +41,7 @@ defmodule Eva.Agent.HarnessTest do
         properties: %{"msg" => %{type: "string", description: "Message to echo"}},
         required: ["msg"]
       },
-      executor: fn args ->
+      executor: fn args, _ctx ->
         %Tools.AgentToolResult{
           content: [%Messages.TextContent{text: "echo: #{args["msg"]}"}]
         }

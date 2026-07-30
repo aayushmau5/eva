@@ -36,7 +36,7 @@ defmodule Eva.Coding.Tools do
         },
         required: ["path"]
       },
-      executor: fn arguments ->
+      executor: fn arguments, _ctx ->
         # arguments is basically a map with string keys(JSON.decode doesn't convert map keys to atoms)
         # example: arguments -> %{"path" => "...", "offset" => .., "limit" => ..}
         path = path_arg(arguments, "path", cwd)
@@ -170,7 +170,7 @@ defmodule Eva.Coding.Tools do
         },
         required: ["path", "content"]
       },
-      executor: fn arguments ->
+      executor: fn arguments, _ctx ->
         path = path_arg(arguments, "path", cwd)
         content = string_arg(arguments, "content")
 
@@ -224,7 +224,7 @@ defmodule Eva.Coding.Tools do
         required: ["path", "edits"],
         additionalProperties: false
       },
-      executor: fn arguments ->
+      executor: fn arguments, _ctx ->
         arguments = prepare_edit_args(arguments)
         path = path_arg(arguments, "path", cwd)
         edits = edits_arg(arguments)
@@ -283,7 +283,7 @@ defmodule Eva.Coding.Tools do
         },
         required: ["command"]
       },
-      executor: fn arguments ->
+      executor: fn arguments, _ctx ->
         command = string_arg(arguments, "command")
         timeout_sec = optional_float_arg(arguments, "timeout")
 

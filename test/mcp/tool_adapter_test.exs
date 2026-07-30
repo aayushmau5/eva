@@ -165,7 +165,7 @@ defmodule Eva.MCP.ToolAdapterTest do
       agent_tool = ToolAdapter.to_agent_tool(config, build_tool())
 
       assert_raise RuntimeError, "MCP server #{config.name} is not running", fn ->
-        agent_tool.executor.(%{})
+        agent_tool.executor.(%{}, nil)
       end
     end
 
@@ -173,7 +173,7 @@ defmodule Eva.MCP.ToolAdapterTest do
       register_mock(config, {:ok, %{"content" => [%{"type" => "text", "text" => "hello"}]}})
       agent_tool = ToolAdapter.to_agent_tool(config, build_tool())
 
-      result = agent_tool.executor.(%{})
+      result = agent_tool.executor.(%{}, nil)
 
       assert %Tools.AgentToolResult{} = result
       assert result.content == [%Messages.TextContent{text: "hello"}]
@@ -189,7 +189,7 @@ defmodule Eva.MCP.ToolAdapterTest do
       agent_tool = ToolAdapter.to_agent_tool(config, build_tool())
 
       assert_raise RuntimeError, "something broke", fn ->
-        agent_tool.executor.(%{})
+        agent_tool.executor.(%{}, nil)
       end
     end
 
@@ -209,7 +209,7 @@ defmodule Eva.MCP.ToolAdapterTest do
       agent_tool = ToolAdapter.to_agent_tool(config, build_tool())
 
       assert_raise RuntimeError, "line one\nline two", fn ->
-        agent_tool.executor.(%{})
+        agent_tool.executor.(%{}, nil)
       end
     end
 
@@ -218,7 +218,7 @@ defmodule Eva.MCP.ToolAdapterTest do
       agent_tool = ToolAdapter.to_agent_tool(config, build_tool())
 
       assert_raise RuntimeError, "Tool call failed", fn ->
-        agent_tool.executor.(%{})
+        agent_tool.executor.(%{}, nil)
       end
     end
 
@@ -227,7 +227,7 @@ defmodule Eva.MCP.ToolAdapterTest do
       agent_tool = ToolAdapter.to_agent_tool(config, build_tool())
 
       assert_raise RuntimeError, "connection refused", fn ->
-        agent_tool.executor.(%{})
+        agent_tool.executor.(%{}, nil)
       end
     end
 
@@ -236,7 +236,7 @@ defmodule Eva.MCP.ToolAdapterTest do
       agent_tool = ToolAdapter.to_agent_tool(config, build_tool())
 
       assert_raise RuntimeError, ":timeout", fn ->
-        agent_tool.executor.(%{})
+        agent_tool.executor.(%{}, nil)
       end
     end
 
@@ -251,7 +251,7 @@ defmodule Eva.MCP.ToolAdapterTest do
 
       agent_tool = ToolAdapter.to_agent_tool(config, build_tool())
 
-      result = agent_tool.executor.(%{})
+      result = agent_tool.executor.(%{}, nil)
 
       assert result.content == [
                %Messages.ImageContent{data: "base64stuff", mime_type: "image/png"}
@@ -273,7 +273,7 @@ defmodule Eva.MCP.ToolAdapterTest do
 
       agent_tool = ToolAdapter.to_agent_tool(config, build_tool())
 
-      result = agent_tool.executor.(%{})
+      result = agent_tool.executor.(%{}, nil)
 
       assert length(result.content) == 3
       assert Enum.at(result.content, 0) == %Messages.TextContent{text: "intro"}
@@ -294,7 +294,7 @@ defmodule Eva.MCP.ToolAdapterTest do
 
       agent_tool = ToolAdapter.to_agent_tool(config, build_tool())
 
-      result = agent_tool.executor.(%{})
+      result = agent_tool.executor.(%{}, nil)
 
       assert result.content == [
                %Messages.TextContent{
@@ -307,7 +307,7 @@ defmodule Eva.MCP.ToolAdapterTest do
       register_mock(config, {:ok, %{}})
       agent_tool = ToolAdapter.to_agent_tool(config, build_tool())
 
-      result = agent_tool.executor.(%{})
+      result = agent_tool.executor.(%{}, nil)
 
       assert result.content == []
     end

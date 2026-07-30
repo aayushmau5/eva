@@ -301,7 +301,7 @@ defmodule Eva.Agent.Loop do
           if is_nil(tool) do
             {unknown_tool_result(tool_call), true}
           else
-            execute_tool(tool, tool_call)
+            execute_tool(tool, tool_call, ctx)
           end
 
         {:block, reason} ->
@@ -311,9 +311,14 @@ defmodule Eva.Agent.Loop do
     apply_after_hook(tool_call, result, is_error, ctx)
   end
 
-  defp execute_tool(%Tools.AgentTool{} = tool, %Messages.ToolCall{} = tool_call) do
-    # TODO: think about passing an "update" function for updates that sends ToolExecutionUpdate event
-    {Tools.execute(tool, tool_call.arguments), false}
+  defp execute_tool(%Tools.AgentTool{} = tool, %Messages.ToolCall{} = tool_call, ctx) do
+    context = %Tools.ExecContext{
+      tool_call_id: tool_call.id,
+      tool_name: tool_call.name,
+      harness_pid: ctx.harness_pid
+    }
+
+    {Tools.execute(tool, tool_call.arguments, context), false}
   rescue
     e ->
       {

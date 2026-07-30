@@ -27,7 +27,7 @@ defmodule Eva.MCP.ToolAdapter do
       description: Map.get(tool, :description),
       input_schema: tool.input_schema,
       prompt_snippet: nil,
-      executor: fn arguments ->
+      executor: fn arguments, _ctx ->
         case Client.whereis(config) do
           nil ->
             raise "MCP server #{config.name} is not running"

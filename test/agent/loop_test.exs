@@ -198,7 +198,7 @@ defmodule Eva.Agent.LoopTest do
         name: "crash",
         description: "Will crash",
         input_schema: %{type: "object", properties: %{}},
-        executor: fn _args -> raise "boom" end
+        executor: fn _args, _ctx -> raise "boom" end
       }
 
       tool_call = %Messages.ToolCall{id: "call_c", name: "crash", arguments: %{}}
@@ -527,7 +527,7 @@ defmodule Eva.Agent.LoopTest do
         properties: %{"msg" => %{type: "string", description: "Message to echo"}},
         required: ["msg"]
       },
-      executor: fn args ->
+      executor: fn args, _ctx ->
         %Tools.AgentToolResult{
           content: [%Messages.TextContent{text: "echo: #{args["msg"]}"}]
         }

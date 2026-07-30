@@ -25,7 +25,7 @@ defmodule Eva.Coding.ToolsTest do
   describe "text file reading" do
     test "reads entire file", %{tmp: tmp} do
       path = write_file(tmp, "hello.txt", "line1\nline2\nline3\n")
-      result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path}, nil)
 
       assert Msg.content_text(result.content) == "line1\nline2\nline3"
       refute result.details.truncation.truncated
@@ -33,14 +33,14 @@ defmodule Eva.Coding.ToolsTest do
 
     test "reads with offset", %{tmp: tmp} do
       path = write_file(tmp, "hello.txt", "a\nb\nc\nd\ne\n")
-      result = CodingTools.read_tool(tmp).executor.(%{"path" => path, "offset" => 3})
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path, "offset" => 3}, nil)
 
       assert Msg.content_text(result.content) == "c\nd\ne"
     end
 
     test "reads with limit and shows remaining hint", %{tmp: tmp} do
       path = write_file(tmp, "hello.txt", "a\nb\nc\nd\ne\n")
-      result = CodingTools.read_tool(tmp).executor.(%{"path" => path, "limit" => 2})
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path, "limit" => 2}, nil)
 
       assert Msg.content_text(result.content) =~ "a\nb"
       assert Msg.content_text(result.content) =~ "more lines in file"
@@ -51,7 +51,7 @@ defmodule Eva.Coding.ToolsTest do
       path = write_file(tmp, "hello.txt", "a\nb\nc\nd\ne\n")
 
       result =
-        CodingTools.read_tool(tmp).executor.(%{"path" => path, "offset" => 2, "limit" => 2})
+        CodingTools.read_tool(tmp).executor.(%{"path" => path, "offset" => 2, "limit" => 2}, nil)
 
       assert Msg.content_text(result.content) =~ "b\nc"
       assert Msg.content_text(result.content) =~ "more lines"
@@ -59,14 +59,14 @@ defmodule Eva.Coding.ToolsTest do
 
     test "reads an empty file", %{tmp: tmp} do
       path = write_file(tmp, "empty.txt", "")
-      result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path}, nil)
 
       assert Msg.content_text(result.content) == ""
     end
 
     test "reads a file without trailing newline", %{tmp: tmp} do
       path = write_file(tmp, "noeol.txt", "single line")
-      result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path}, nil)
 
       assert Msg.content_text(result.content) == "single line"
       assert result.details.truncation.total_lines == 1
@@ -78,7 +78,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.read_tool(tmp)
 
       assert_raise RuntimeError, ~r/File not found/, fn ->
-        tool.executor.(%{"path" => Path.join(tmp, "nope.txt")})
+        tool.executor.(%{"path" => Path.join(tmp, "nope.txt")}, nil)
       end
     end
 
@@ -86,7 +86,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.read_tool(tmp)
 
       assert_raise RuntimeError, ~r/Path is a directory/, fn ->
-        tool.executor.(%{"path" => tmp})
+        tool.executor.(%{"path" => tmp}, nil)
       end
     end
 
@@ -95,7 +95,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.read_tool(tmp)
 
       assert_raise RuntimeError, ~r/offset must be at least 0/, fn ->
-        tool.executor.(%{"path" => path, "offset" => -1})
+        tool.executor.(%{"path" => path, "offset" => -1}, nil)
       end
     end
 
@@ -104,7 +104,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.read_tool(tmp)
 
       assert_raise RuntimeError, ~r/limit must be at least 1/, fn ->
-        tool.executor.(%{"path" => path, "limit" => 0})
+        tool.executor.(%{"path" => path, "limit" => 0}, nil)
       end
     end
 
@@ -113,7 +113,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.read_tool(tmp)
 
       assert_raise RuntimeError, ~r/Offset.*beyond end of file/, fn ->
-        tool.executor.(%{"path" => path, "offset" => 10})
+        tool.executor.(%{"path" => path, "offset" => 10}, nil)
       end
     end
 
@@ -122,7 +122,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.read_tool(tmp)
 
       assert_raise RuntimeError, ~r/is not an integer/, fn ->
-        tool.executor.(%{"path" => path, "offset" => "abc"})
+        tool.executor.(%{"path" => path, "offset" => "abc"}, nil)
       end
     end
 
@@ -131,7 +131,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.read_tool(tmp)
 
       assert_raise RuntimeError, ~r/is not an integer/, fn ->
-        tool.executor.(%{"path" => path, "limit" => "abc"})
+        tool.executor.(%{"path" => path, "limit" => "abc"}, nil)
       end
     end
   end
@@ -143,7 +143,7 @@ defmodule Eva.Coding.ToolsTest do
       content = Enum.map_join(1..(@default_max_output_lines + 5), "\n", &"line #{&1}")
       path = write_file(tmp, "big.txt", content)
 
-      result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path}, nil)
 
       assert result.details.truncation.truncated
       assert result.details.truncation.truncated_by == "lines"
@@ -154,7 +154,7 @@ defmodule Eva.Coding.ToolsTest do
       big_line = String.duplicate("x", 51_300)
       path = write_file(tmp, "big_line.txt", "#{big_line}\nline2\n")
 
-      result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path}, nil)
 
       assert result.details.truncation.first_line_exceeds_limit
       assert Msg.content_text(result.content) =~ "Line 1 is"
@@ -165,7 +165,7 @@ defmodule Eva.Coding.ToolsTest do
     test "truncation metadata is present for small files", %{tmp: tmp} do
       path = write_file(tmp, "x.txt", "hello\nworld\n")
 
-      result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path}, nil)
 
       assert result.details.truncation.truncated == false
       assert result.details.truncation.total_lines == 2
@@ -178,7 +178,7 @@ defmodule Eva.Coding.ToolsTest do
       content = Enum.map_join(1..80, "\n", fn _ -> line end)
       path = write_file(tmp, "byte_limit.txt", content)
 
-      result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path}, nil)
 
       assert result.details.truncation.truncated
       assert result.details.truncation.truncated_by == "bytes"
@@ -189,14 +189,14 @@ defmodule Eva.Coding.ToolsTest do
       path = write_file(tmp, "lines.txt", "a\nb\nc")
 
       result =
-        CodingTools.read_tool(tmp).executor.(%{"path" => path, "offset" => 3, "limit" => 1})
+        CodingTools.read_tool(tmp).executor.(%{"path" => path, "offset" => 3, "limit" => 1}, nil)
 
       assert Msg.content_text(result.content) == "c"
     end
 
     test "total_lines in truncation strips trailing empty line", %{tmp: tmp} do
       path = write_file(tmp, "x.txt", "a\nb\n")
-      result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path}, nil)
 
       # split_lines_for_counting drops trailing empty from EOL-terminated files
       assert result.details.truncation.total_lines == 2
@@ -209,7 +209,7 @@ defmodule Eva.Coding.ToolsTest do
       content = "hello write tool\n"
       tool = CodingTools.write_tool(tmp)
 
-      result = tool.executor.(%{"path" => path, "content" => content})
+      result = tool.executor.(%{"path" => path, "content" => content}, nil)
 
       assert Msg.content_text(result.content) =~ "Successfully wrote to #{path}"
       assert result.details.path == path
@@ -223,7 +223,7 @@ defmodule Eva.Coding.ToolsTest do
       new_content = "new content\n"
       tool = CodingTools.write_tool(tmp)
 
-      _result = tool.executor.(%{"path" => path, "content" => new_content})
+      _result = tool.executor.(%{"path" => path, "content" => new_content}, nil)
 
       assert File.read!(path) == new_content
     end
@@ -233,7 +233,7 @@ defmodule Eva.Coding.ToolsTest do
       content = "deep content"
       tool = CodingTools.write_tool(tmp)
 
-      _result = tool.executor.(%{"path" => path, "content" => content})
+      _result = tool.executor.(%{"path" => path, "content" => content}, nil)
 
       assert File.exists?(path)
       assert File.read!(path) == content
@@ -243,7 +243,7 @@ defmodule Eva.Coding.ToolsTest do
       path = Path.join(tmp, "empty.txt")
       tool = CodingTools.write_tool(tmp)
 
-      result = tool.executor.(%{"path" => path, "content" => ""})
+      result = tool.executor.(%{"path" => path, "content" => ""}, nil)
 
       assert result.details.characters == 0
       assert File.read!(path) == ""
@@ -253,7 +253,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.write_tool(tmp)
 
       assert_raise RuntimeError, ~r/Missing argument path/, fn ->
-        tool.executor.(%{"content" => "x"})
+        tool.executor.(%{"content" => "x"}, nil)
       end
     end
 
@@ -261,14 +261,14 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.write_tool(tmp)
 
       assert_raise RuntimeError, ~r/Missing argument content/, fn ->
-        tool.executor.(%{"path" => Path.join(tmp, "f.txt")})
+        tool.executor.(%{"path" => Path.join(tmp, "f.txt")}, nil)
       end
     end
 
     test "resolves relative paths against process cwd", %{tmp: tmp} do
       tool = CodingTools.write_tool(tmp)
 
-      result = tool.executor.(%{"path" => "relative.txt", "content" => "relative content"})
+      result = tool.executor.(%{"path" => "relative.txt", "content" => "relative content"}, nil)
 
       assert result.details.path =~ ~r/relative\.txt$/
       assert File.exists?(result.details.path)
@@ -280,7 +280,7 @@ defmodule Eva.Coding.ToolsTest do
   describe "image files" do
     test "returns image metadata for png", %{tmp: tmp} do
       path = write_file(tmp, "img.png", "fake-image-data")
-      result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path}, nil)
 
       assert Msg.content_text(result.content) == "Read image file [image/png]"
       assert result.details.mime_type == "image/png"
@@ -290,7 +290,7 @@ defmodule Eva.Coding.ToolsTest do
 
     test "returns image metadata for jpg", %{tmp: tmp} do
       path = write_file(tmp, "photo.jpg", "not-real-jpg")
-      result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path}, nil)
 
       assert Msg.content_text(result.content) == "Read image file [image/jpeg]"
       assert result.details.mime_type == "image/jpeg"
@@ -298,7 +298,7 @@ defmodule Eva.Coding.ToolsTest do
 
     test "returns image metadata for gif", %{tmp: tmp} do
       path = write_file(tmp, "anim.gif", "fake-gif-data")
-      result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path}, nil)
 
       assert Msg.content_text(result.content) == "Read image file [image/gif]"
       assert result.details.mime_type == "image/gif"
@@ -307,7 +307,7 @@ defmodule Eva.Coding.ToolsTest do
 
     test "returns image metadata for webp", %{tmp: tmp} do
       path = write_file(tmp, "img.webp", "fake-webp-data")
-      result = CodingTools.read_tool(tmp).executor.(%{"path" => path})
+      result = CodingTools.read_tool(tmp).executor.(%{"path" => path}, nil)
 
       assert Msg.content_text(result.content) == "Read image file [image/webp]"
       assert result.details.mime_type == "image/webp"
@@ -321,10 +321,13 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       result =
-        tool.executor.(%{
-          "path" => path,
-          "edits" => [%{"oldText" => "beta", "newText" => "BETA"}]
-        })
+        tool.executor.(
+          %{
+            "path" => path,
+            "edits" => [%{"oldText" => "beta", "newText" => "BETA"}]
+          },
+          nil
+        )
 
       assert result.details.first_changed_line == 2
       assert result.details.diff =~ "- beta"
@@ -341,13 +344,16 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       result =
-        tool.executor.(%{
-          "path" => path,
-          "edits" => [
-            %{"oldText" => "beta", "newText" => "BETA"},
-            %{"oldText" => "delta", "newText" => "DELTA"}
-          ]
-        })
+        tool.executor.(
+          %{
+            "path" => path,
+            "edits" => [
+              %{"oldText" => "beta", "newText" => "BETA"},
+              %{"oldText" => "delta", "newText" => "DELTA"}
+            ]
+          },
+          nil
+        )
 
       assert result.details.edits == 2
       assert result.details.first_changed_line == 2
@@ -363,10 +369,13 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       result =
-        tool.executor.(%{
-          "path" => path,
-          "edits" => [%{"oldText" => "alpha", "newText" => "ALPHA"}]
-        })
+        tool.executor.(
+          %{
+            "path" => path,
+            "edits" => [%{"oldText" => "alpha", "newText" => "ALPHA"}]
+          },
+          nil
+        )
 
       assert result.details.first_changed_line == 1
       assert result.details.diff =~ "- alpha"
@@ -379,10 +388,13 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       result =
-        tool.executor.(%{
-          "path" => path,
-          "edits" => [%{"oldText" => "gamma", "newText" => "GAMMA"}]
-        })
+        tool.executor.(
+          %{
+            "path" => path,
+            "edits" => [%{"oldText" => "gamma", "newText" => "GAMMA"}]
+          },
+          nil
+        )
 
       assert result.details.first_changed_line == 3
       assert result.details.diff =~ "- gamma"
@@ -395,10 +407,13 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       result =
-        tool.executor.(%{
-          "path" => path,
-          "edits" => [%{"oldText" => "beta\n", "newText" => ""}]
-        })
+        tool.executor.(
+          %{
+            "path" => path,
+            "edits" => [%{"oldText" => "beta\n", "newText" => ""}]
+          },
+          nil
+        )
 
       assert result.details.first_changed_line == 2
       assert result.details.diff =~ "- beta"
@@ -410,10 +425,13 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       result =
-        tool.executor.(%{
-          "path" => path,
-          "edits" => [%{"oldText" => "alpha\n", "newText" => "alpha\nbeta\n"}]
-        })
+        tool.executor.(
+          %{
+            "path" => path,
+            "edits" => [%{"oldText" => "alpha\n", "newText" => "alpha\nbeta\n"}]
+          },
+          nil
+        )
 
       assert result.details.diff =~ "+ beta"
       assert File.read!(path) == "alpha\nbeta\ngamma\n"
@@ -425,10 +443,13 @@ defmodule Eva.Coding.ToolsTest do
       edits_json = JSON.encode!([%{"oldText" => "beta", "newText" => "BETA"}])
 
       _result =
-        tool.executor.(%{
-          "path" => path,
-          "edits" => edits_json
-        })
+        tool.executor.(
+          %{
+            "path" => path,
+            "edits" => edits_json
+          },
+          nil
+        )
 
       assert File.read!(path) == "alpha\nBETA\ngamma\n"
     end
@@ -439,10 +460,13 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       result =
-        tool.executor.(%{
-          "path" => path,
-          "edits" => [%{"oldText" => "line2", "newText" => "LINE2"}]
-        })
+        tool.executor.(
+          %{
+            "path" => path,
+            "edits" => [%{"oldText" => "line2", "newText" => "LINE2"}]
+          },
+          nil
+        )
 
       assert File.read!(path) == "line1\r\nLINE2\r\nline3\r\n"
       assert result.details.diff =~ "- line2"
@@ -455,10 +479,13 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       result =
-        tool.executor.(%{
-          "path" => path,
-          "edits" => [%{"oldText" => "beta", "newText" => "BETA"}]
-        })
+        tool.executor.(
+          %{
+            "path" => path,
+            "edits" => [%{"oldText" => "beta", "newText" => "BETA"}]
+          },
+          nil
+        )
 
       assert File.read!(path) == "\uFEFFalpha\nBETA\ngamma\n"
       assert result.details.diff =~ "- beta"
@@ -470,10 +497,13 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       assert_raise RuntimeError, ~r/Could not find edits\[0\]/, fn ->
-        tool.executor.(%{
-          "path" => path,
-          "edits" => [%{"oldText" => "not-here", "newText" => "x"}]
-        })
+        tool.executor.(
+          %{
+            "path" => path,
+            "edits" => [%{"oldText" => "not-here", "newText" => "x"}]
+          },
+          nil
+        )
       end
     end
 
@@ -482,10 +512,13 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       assert_raise RuntimeError, ~r/Found 3 occurrences/, fn ->
-        tool.executor.(%{
-          "path" => path,
-          "edits" => [%{"oldText" => "beta", "newText" => "BETA"}]
-        })
+        tool.executor.(
+          %{
+            "path" => path,
+            "edits" => [%{"oldText" => "beta", "newText" => "BETA"}]
+          },
+          nil
+        )
       end
     end
 
@@ -494,13 +527,16 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       assert_raise RuntimeError, ~r/must not overlap/, fn ->
-        tool.executor.(%{
-          "path" => path,
-          "edits" => [
-            %{"oldText" => "hello w", "newText" => "x"},
-            %{"oldText" => "hello", "newText" => "y"}
-          ]
-        })
+        tool.executor.(
+          %{
+            "path" => path,
+            "edits" => [
+              %{"oldText" => "hello w", "newText" => "x"},
+              %{"oldText" => "hello", "newText" => "y"}
+            ]
+          },
+          nil
+        )
       end
     end
 
@@ -509,10 +545,13 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       assert_raise RuntimeError, ~r/No changes made/, fn ->
-        tool.executor.(%{
-          "path" => path,
-          "edits" => [%{"oldText" => "hello", "newText" => "hello"}]
-        })
+        tool.executor.(
+          %{
+            "path" => path,
+            "edits" => [%{"oldText" => "hello", "newText" => "hello"}]
+          },
+          nil
+        )
       end
     end
 
@@ -520,10 +559,13 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       assert_raise RuntimeError, ~r/File not found/, fn ->
-        tool.executor.(%{
-          "path" => Path.join(tmp, "nope.txt"),
-          "edits" => [%{"oldText" => "x", "newText" => "y"}]
-        })
+        tool.executor.(
+          %{
+            "path" => Path.join(tmp, "nope.txt"),
+            "edits" => [%{"oldText" => "x", "newText" => "y"}]
+          },
+          nil
+        )
       end
     end
 
@@ -531,10 +573,13 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       assert_raise RuntimeError, ~r/Path is a directory/, fn ->
-        tool.executor.(%{
-          "path" => tmp,
-          "edits" => [%{"oldText" => "x", "newText" => "y"}]
-        })
+        tool.executor.(
+          %{
+            "path" => tmp,
+            "edits" => [%{"oldText" => "x", "newText" => "y"}]
+          },
+          nil
+        )
       end
     end
 
@@ -543,7 +588,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       assert_raise RuntimeError, ~r/must contain at least one replacement/, fn ->
-        tool.executor.(%{"path" => path, "edits" => []})
+        tool.executor.(%{"path" => path, "edits" => []}, nil)
       end
     end
 
@@ -551,7 +596,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       assert_raise RuntimeError, ~r/Missing argument path/, fn ->
-        tool.executor.(%{"edits" => [%{"oldText" => "x", "newText" => "y"}]})
+        tool.executor.(%{"edits" => [%{"oldText" => "x", "newText" => "y"}]}, nil)
       end
     end
 
@@ -560,7 +605,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       assert_raise RuntimeError, ~r/must contain at least one replacement/, fn ->
-        tool.executor.(%{"path" => path})
+        tool.executor.(%{"path" => path}, nil)
       end
     end
 
@@ -569,7 +614,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       assert_raise RuntimeError, ~r/must be an object/, fn ->
-        tool.executor.(%{"path" => path, "edits" => ["not a map"]})
+        tool.executor.(%{"path" => path, "edits" => ["not a map"]}, nil)
       end
     end
 
@@ -578,7 +623,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.edit_tool(tmp)
 
       assert_raise RuntimeError, ~r/must be strings/, fn ->
-        tool.executor.(%{"path" => path, "edits" => [%{"oldText" => "x"}]})
+        tool.executor.(%{"path" => path, "edits" => [%{"oldText" => "x"}]}, nil)
       end
     end
   end
@@ -586,7 +631,7 @@ defmodule Eva.Coding.ToolsTest do
   describe "bash" do
     test "executes a simple command", %{tmp: tmp} do
       tool = CodingTools.bash_tool(tmp)
-      result = tool.executor.(%{"command" => "echo hello"})
+      result = tool.executor.(%{"command" => "echo hello"}, nil)
 
       assert Msg.content_text(result.content) =~ "hello"
       assert result.details["exit_code"] == 0
@@ -598,14 +643,14 @@ defmodule Eva.Coding.ToolsTest do
 
     test "captures stderr in output", %{tmp: tmp} do
       tool = CodingTools.bash_tool(tmp)
-      result = tool.executor.(%{"command" => "echo err >&2"})
+      result = tool.executor.(%{"command" => "echo err >&2"}, nil)
 
       assert Msg.content_text(result.content) =~ "err"
     end
 
     test "returns non-zero exit code", %{tmp: tmp} do
       tool = CodingTools.bash_tool(tmp)
-      result = tool.executor.(%{"command" => "exit 42"})
+      result = tool.executor.(%{"command" => "exit 42"}, nil)
 
       assert result.details["exit_code"] == 42
       assert Msg.content_text(result.content) =~ "exited with code 42"
@@ -613,21 +658,21 @@ defmodule Eva.Coding.ToolsTest do
 
     test "returns (no output) for empty stdout", %{tmp: tmp} do
       tool = CodingTools.bash_tool(tmp)
-      result = tool.executor.(%{"command" => "true"})
+      result = tool.executor.(%{"command" => "true"}, nil)
 
       assert Msg.content_text(result.content) == "(no output)"
     end
 
     test "runs in the given cwd", %{tmp: tmp} do
       tool = CodingTools.bash_tool(tmp)
-      result = tool.executor.(%{"command" => "pwd"})
+      result = tool.executor.(%{"command" => "pwd"}, nil)
 
       assert String.trim(Msg.content_text(result.content)) == tmp
     end
 
     test "truncates long output", %{tmp: tmp} do
       tool = CodingTools.bash_tool(tmp)
-      result = tool.executor.(%{"command" => "yes 'x' | head -n 3000"})
+      result = tool.executor.(%{"command" => "yes 'x' | head -n 3000"}, nil)
 
       assert result.details["truncation"].truncated
       assert Msg.content_text(result.content) =~ "Full output:"
@@ -639,7 +684,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.bash_tool(tmp)
 
       assert_raise RuntimeError, ~r/Missing argument command/, fn ->
-        tool.executor.(%{})
+        tool.executor.(%{}, nil)
       end
     end
 
@@ -647,7 +692,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.bash_tool(tmp)
 
       assert_raise RuntimeError, ~r/is not a string/, fn ->
-        tool.executor.(%{"command" => 123})
+        tool.executor.(%{"command" => 123}, nil)
       end
     end
 
@@ -655,7 +700,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.bash_tool(tmp)
 
       assert_raise RuntimeError, ~r/timeout must be greater than 0/, fn ->
-        tool.executor.(%{"command" => "echo hi", "timeout" => 0})
+        tool.executor.(%{"command" => "echo hi", "timeout" => 0}, nil)
       end
     end
 
@@ -663,7 +708,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.bash_tool(tmp)
 
       assert_raise RuntimeError, ~r/timeout must be greater than 0/, fn ->
-        tool.executor.(%{"command" => "echo hi", "timeout" => -1})
+        tool.executor.(%{"command" => "echo hi", "timeout" => -1}, nil)
       end
     end
 
@@ -671,7 +716,7 @@ defmodule Eva.Coding.ToolsTest do
       tool = CodingTools.bash_tool(tmp)
 
       assert_raise RuntimeError, ~r/is not a number/, fn ->
-        tool.executor.(%{"command" => "echo hi", "timeout" => "abc"})
+        tool.executor.(%{"command" => "echo hi", "timeout" => "abc"}, nil)
       end
     end
   end
