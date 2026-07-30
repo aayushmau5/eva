@@ -65,7 +65,11 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
       - [x] bash
         - [ ] Explore just-bash(https://github.com/elixir-ai-tools/just_bash) for bash interpreter(& virtual FS)
       - [ ] Q/A
-      - [ ] Web search/fetch
+      - [x] Web search
+        - [x] Using exa MCP
+        - [ ] Brave search API
+      - [ ] Web fetch
+        - [ ] With multiple output format: markdown, html
   - [ ] Subagents
   - [ ] UI agnostic commands layer
   - [ ] Modes or Characters(?)(like amp)
@@ -82,6 +86,7 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
     - [ ] System prompts
     - [ ] Resources
     - [x] Notifications
+    - [x] Toggle servers on/off (per-session override or persisted to `mcp.json`)
     - [ ] Requests from MCPs
   - [ ] Ability to modify itself
     - [ ] With Hot reload?
