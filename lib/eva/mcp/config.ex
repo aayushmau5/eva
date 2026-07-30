@@ -24,14 +24,17 @@ defmodule Eva.MCP.Config do
 
   @spec parse(Resources.t()) :: {[t()], [JSON.decode_error_reason()]}
   def parse(%Resources{cwd: cwd, root: root}) do
-    global_mcp_config = Path.join(root, "mcp.json") |> read()
-    project_mcp_config = Path.join([cwd, ".eva", "mcp.json"]) |> read()
+    global_mcp_path = Path.join(root, "mcp.json")
+    project_mcp_path = Path.join([cwd, ".eva", "mcp.json"])
+
+    global_mcp_config = read(global_mcp_path)
+    project_mcp_config = read(project_mcp_path)
 
     {global_mcps, global_diagnostics} =
-      parse_mcp_config_from_json(global_mcp_config, :global)
+      parse_mcp_config_from_json(global_mcp_config, global_mcp_path, :global)
 
     {project_mcps, project_diagnostics} =
-      parse_mcp_config_from_json(project_mcp_config, cwd)
+      parse_mcp_config_from_json(project_mcp_config, project_mcp_path, cwd)
 
     {dedup_and_merge(global_mcps, project_mcps) |> Enum.filter(& &1.enabled),
      global_diagnostics ++ project_diagnostics}
@@ -44,52 +47,84 @@ defmodule Eva.MCP.Config do
     end
   end
 
-  defp parse_mcp_config_from_json(nil, _), do: {[], []}
-  defp parse_mcp_config_from_json({:error, reason}, _), do: {[], [reason]}
+  defp parse_mcp_config_from_json(nil, _, _), do: {[], []}
+  defp parse_mcp_config_from_json({:error, reason}, _, _), do: {[], [reason]}
 
-  defp parse_mcp_config_from_json({:ok, mcp_config_json}, scope) do
-    mcps = Map.fetch!(mcp_config_json, "mcpServers")
+  defp parse_mcp_config_from_json({:ok, mcp_config_json}, path, scope) do
+    mcps = Map.get(mcp_config_json, "mcpServers")
 
-    servers =
-      Enum.map(mcps, fn {name, config_json} ->
-        type = Map.fetch!(config_json, "type")
+    if mcps == [] do
+      {[], ["Missing `mcpServers` key in #{path}"]}
+    else
+      {servers, diagnostics} =
+        Enum.reduce(mcps, {[], []}, fn {name, config_json}, {servers, diagnostics} ->
+          case server_type(config_json) do
+            "stdio" ->
+              {[make_stdio(name, scope, config_json) | servers], diagnostics}
 
-        case type do
-          "stdio" ->
-            command = Map.get(config_json, "command")
-            args = Map.get(config_json, "args", [])
-            # TODO: do `${}` interpolation in the env(ex. "${GITHUB_TOKEN}")
-            env = Map.get(config_json, "env")
-            enabled = Map.get(config_json, "enabled", true)
-            cwd = Map.get(config_json, "cwd")
-            config = %Stdio{command: command, args: args, env: env, cwd: cwd}
+            "http" ->
+              {[make_http(name, scope, config_json) | servers], diagnostics}
 
-            %__MODULE__{
-              scope_dir: scope,
-              name: name,
-              type: :stdio,
-              config: config,
-              enabled: enabled
-            }
+            :unknown ->
+              {servers, ["Cannot determine MCP server type for #{name}" | diagnostics]}
 
-          "http" ->
-            url = Map.get(config_json, "url")
-            headers = Map.get(config_json, "headers")
-            enabled = Map.get(config_json, "enabled", true)
+            type ->
+              {servers, ["Unknown type for #{name}: #{type}" | diagnostics]}
+          end
+        end)
 
-            config = %Http{url: url, headers: headers}
+      {Enum.reverse(servers), Enum.reverse(diagnostics)}
+    end
+  end
 
-            %__MODULE__{
-              scope_dir: scope,
-              name: name,
-              type: :http,
-              config: config,
-              enabled: enabled
-            }
-        end
-      end)
+  defp server_type(config_json) do
+    cond do
+      type = Map.get(config_json, "type") ->
+        type
 
-    {servers, []}
+      Map.has_key?(config_json, "command") ->
+        "stdio"
+
+      Map.has_key?(config_json, "url") ->
+        "http"
+
+      true ->
+        :unknown
+    end
+  end
+
+  defp make_stdio(name, scope, config_json) do
+    command = Map.get(config_json, "command")
+    args = Map.get(config_json, "args", [])
+    # TODO: do `${}` interpolation in the env(ex. "${GITHUB_TOKEN}")
+    env = Map.get(config_json, "env")
+    enabled = Map.get(config_json, "enabled", true)
+    cwd = Map.get(config_json, "cwd")
+    config = %Stdio{command: command, args: args, env: env, cwd: cwd}
+
+    %__MODULE__{
+      scope_dir: scope,
+      name: name,
+      type: :stdio,
+      config: config,
+      enabled: enabled
+    }
+  end
+
+  defp make_http(name, scope, config_json) do
+    url = Map.get(config_json, "url")
+    headers = Map.get(config_json, "headers")
+    enabled = Map.get(config_json, "enabled", true)
+
+    config = %Http{url: url, headers: headers}
+
+    %__MODULE__{
+      scope_dir: scope,
+      name: name,
+      type: :http,
+      config: config,
+      enabled: enabled
+    }
   end
 
   # Project entries win outright over global ones with the same name

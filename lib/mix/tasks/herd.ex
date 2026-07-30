@@ -165,6 +165,7 @@ defmodule Mix.Tasks.Herd do
 
       other ->
         IO.puts("")
+
         IO.puts([
           IO.ANSI.faint(),
           "  Unhandled: ",
