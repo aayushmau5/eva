@@ -90,6 +90,11 @@ defmodule Eva.Agent.Harness do
     GenServer.call(pid, {:update_tools, tools})
   end
 
+  @spec update_system_prompt(GenServer.server(), String.t()) :: :ok
+  def update_system_prompt(pid \\ __MODULE__, system_prompt) do
+    GenServer.call(pid, {:update_system_prompt, system_prompt})
+  end
+
   @spec change_provider(GenServer.server(), pid()) :: {:ok, map()}
   def change_provider(pid \\ __MODULE__, provider_pid) do
     GenServer.call(pid, {:change_provider, provider_pid})
@@ -226,7 +231,6 @@ defmodule Eva.Agent.Harness do
     {:reply, state.messages, state}
   end
 
-  @impl true
   def handle_call(:running_status, _from, state) do
     {:reply, state.running?, state}
   end
@@ -291,6 +295,10 @@ defmodule Eva.Agent.Harness do
 
   def handle_call(:get_state, _from, state) do
     {:reply, {:ok, state}, state}
+  end
+
+  def handle_call({:update_system_prompt, system_prompt}, _from, state) do
+    {:reply, :ok, %{state | system_prompt: system_prompt}}
   end
 
   # -- handle_info --

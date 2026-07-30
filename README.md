@@ -74,6 +74,13 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
     - [ ] Oracle
   - [ ] Extensions
     - [ ] Perhpas "sharing" as an extension
+  - [ ] MCP
+    - [x] Stdio
+    - [ ] Http
+    - [x] Tool calls
+    - [ ] System prompts
+    - [ ] Resources
+    - [x] Notifications
   - [ ] Ability to modify itself
     - [ ] With Hot reload?
   - [ ] Sharing(login?)
