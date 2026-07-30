@@ -49,8 +49,14 @@ defmodule Eva.MCP.Protocol do
     %{cursor: cursor}
   end
 
-  def tools_call_params(name, arguments) do
-    %{name: name, arguments: arguments || %{}}
+  def tools_call_params(name, arguments, progress_token \\ nil) do
+    params = %{name: name, arguments: arguments || %{}}
+
+    if progress_token do
+      Map.put(params, :_meta, %{progressToken: progress_token})
+    else
+      params
+    end
   end
 
   # -- Result parsing --

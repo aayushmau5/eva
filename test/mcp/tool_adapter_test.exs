@@ -19,8 +19,20 @@ defmodule Eva.MCP.ToolAdapterTest do
     end
 
     @impl true
-    def handle_call({:call_tool, _name, _args}, _from, reply) do
-      {:reply, reply, reply}
+    def handle_call({:call_tool_async, _name, _args, receiver_pid}, _from, {:ok, _result} = reply) do
+      ref = make_ref()
+      send(receiver_pid, {:mcp_result, ref, elem(reply, 1)})
+      {:reply, {:ok, ref}, reply}
+    end
+
+    def handle_call(
+          {:call_tool_async, _name, _args, receiver_pid},
+          _from,
+          {:error, _reason} = reply
+        ) do
+      ref = make_ref()
+      send(receiver_pid, {:mcp_error, ref, elem(reply, 1)})
+      {:reply, {:ok, ref}, reply}
     end
   end
 

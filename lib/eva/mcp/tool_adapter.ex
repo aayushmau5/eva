@@ -27,14 +27,16 @@ defmodule Eva.MCP.ToolAdapter do
       description: Map.get(tool, :description),
       input_schema: tool.input_schema,
       prompt_snippet: nil,
-      executor: fn arguments, _ctx ->
+      executor: fn arguments, ctx ->
         case Client.whereis(config) do
           nil ->
             raise "MCP server #{config.name} is not running"
 
           pid ->
-            Client.call_tool(pid, name, arguments)
-            |> to_tool_result()
+            case Client.call_tool_async(pid, name, arguments, self()) do
+              {:ok, ref} -> await_tool_result(ref, ctx)
+              {:error, reason} -> to_tool_result({:error, reason})
+            end
         end
       end
     }
@@ -107,4 +109,31 @@ defmodule Eva.MCP.ToolAdapter do
   # yet. Stringify rather than dropping them, so the model at least sees that
   # something came back.
   defp to_content_block(block), do: %Messages.TextContent{text: JSON.encode!(block)}
+
+  defp await_tool_result(ref, ctx) do
+    receive do
+      {:mcp_progress, ^ref, info} ->
+        result = %Tools.AgentToolResult{
+          content: [%Messages.TextContent{text: progress_text(info)}]
+        }
+
+        Tools.report_update(ctx, result)
+        await_tool_result(ref, ctx)
+
+      {:mcp_result, ^ref, result} ->
+        to_tool_result({:ok, result})
+
+      {:mcp_error, ^ref, error} ->
+        to_tool_result({:error, error})
+    after
+      30_000 -> raise "MCP tool call: #{ctx.tool_name} timed out"
+    end
+  end
+
+  defp progress_text(%{message: message}) when is_binary(message), do: message
+
+  defp progress_text(%{progress: progress, total: total}) when is_number(total),
+    do: "#{progress}/#{total}"
+
+  defp progress_text(%{progress: progress}), do: "#{progress}"
 end

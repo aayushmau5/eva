@@ -122,10 +122,14 @@ defmodule Eva.MCP.Client do
   def handle_call({:call_tool_async, name, args, receiver_pid}, _from, state) do
     ref = make_ref()
 
+    # peek at next id
+    {id, _state} = next_id(state)
+
     case request(
            state,
            "tools/call",
-           Protocol.tools_call_params(name, args),
+           # We are using `id` as progressToken in tool call params
+           Protocol.tools_call_params(name, args, id),
            {:async, receiver_pid, ref}
          ) do
       {:ok, state} ->
@@ -322,7 +326,28 @@ defmodule Eva.MCP.Client do
 
   # -- Notifications --
 
-  # TODO: add progress updates as well
+  defp route_notification(%State{} = state, "notifications/progress", params) do
+    progress_token = Map.get(params, "progressToken")
+
+    case Map.get(state.pending, progress_token) do
+      {:async, pid, ref} ->
+        send(
+          pid,
+          {:mcp_progress, ref,
+           %{
+             progress: Map.get(params, "progress"),
+             total: Map.get(params, "total"),
+             message: Map.get(params, "message")
+           }}
+        )
+
+        state
+
+      _ ->
+        state
+    end
+  end
+
   defp route_notification(%State{} = state, "notifications/message", params) do
     publish(state, %Events.ServerLog{
       server_name: state.config.name,
