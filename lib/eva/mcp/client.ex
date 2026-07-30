@@ -163,6 +163,12 @@ defmodule Eva.MCP.Client do
       {:closed, reason} ->
         {:noreply, disconnected(state, reason)}
 
+      # Same as `:ignore` — nothing to route — but the transport still needs
+      # its returned state persisted (e.g. `Transport.Http` capturing
+      # `Mcp-Session-Id` from a response that carried no frame of its own).
+      {:ignore, transport} ->
+        {:noreply, %State{state | transport: transport}}
+
       :ignore ->
         {:noreply, state}
     end
