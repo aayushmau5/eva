@@ -78,6 +78,10 @@ defmodule Eva.Coding.Session do
     field :auto_name_attempted, boolean(), default: false
     field :base_tools, [AgentTools.AgentTool.t()], default: []
     field :mcp, MCP.SessionServers.t()
+    # for terminal escape hatch
+    field :bash_run,
+          %{task: Task.t(), from: GenServer.from(), command: String.t(), private?: boolean()},
+          default: nil
   end
 
   # -- Public API --
@@ -167,10 +171,14 @@ defmodule Eva.Coding.Session do
     GenServer.call(pid, {:fork, entry_id})
   end
 
-  @spec run_bash(pid(), String.t(), keyword()) ::
-          {:ok, Messages.BashExecutionMessage.t()} | {:error, term()}
+  @spec run_bash(pid(), String.t(), keyword()) :: {:ok, term()} | {:error, term()}
   def run_bash(pid, command, opts \\ []) do
     GenServer.call(pid, {:run_bash, command, opts}, :infinity)
+  end
+
+  @spec cancel_bash(pid()) :: :ok
+  def cancel_bash(pid) do
+    GenServer.call(pid, :cancel_bash)
   end
 
   @doc """
@@ -305,9 +313,10 @@ defmodule Eva.Coding.Session do
 
   def handle_call({:prompt, prompt, streaming_behaviour}, _from, %__MODULE__{} = state) do
     harness_running? = Harness.running?(state.harness_pid)
+    bash_running? = not is_nil(state.bash_run)
     prompt = expand_prompt_text(state, prompt)
 
-    if harness_running? do
+    if harness_running? or bash_running? do
       case streaming_behaviour do
         :steer ->
           :ok = Harness.steer(state.harness_pid, prompt)
@@ -429,45 +438,44 @@ defmodule Eva.Coding.Session do
     end
   end
 
-  def handle_call({:run_bash, command, opts}, _from, %__MODULE__{} = state) do
-    if Harness.running?(state.harness_pid) do
-      {:reply, {:error, :agent_running}, state}
-    else
-      timeout = Keyword.get(opts, :timeout, 120_000)
-      result = Eva.Coding.ShellExec.run(command, cwd: state.config.cwd, timeout: timeout)
-      truncation = CodingTools.truncate_tail(result.output)
+  def handle_call({:run_bash, command, opts}, from, %__MODULE__{} = state) do
+    cond do
+      Harness.running?(state.harness_pid) ->
+        {:reply, {:error, :agent_running}, state}
 
-      {output, full_output_path} =
-        if truncation.truncated do
-          path = CodingTools.write_temp_output(result.output)
-          {truncation.content <> CodingTools.build_truncation_suffix(truncation, path), path}
-        else
-          {truncation.content, nil}
-        end
+      state.bash_run ->
+        {:reply, {:error, :bash_running}, state}
 
-      message = %Messages.BashExecutionMessage{
-        command: command,
-        output: output,
-        exit_code: result.exit_status,
-        cancelled: result.cancelled,
-        truncated: truncation.truncated,
-        full_output_path: full_output_path,
-        timestamp: Eva.Agent.Utils.current_timestamp_ms(),
-        exclude_from_context: Keyword.get(opts, :exclude_from_context, false)
-      }
+      true ->
+        timeout = Keyword.get(opts, :timeout, 120_000)
+        task = Eva.Coding.ShellExec.run_async(command, cwd: state.config.cwd, timeout: timeout)
 
-      {:ok, _} =
-        Harness.update_messages(
-          state.harness_pid,
-          Harness.messages(state.harness_pid) ++ [message]
-        )
+        forward_event(state, %AgentEvents.MessageStart{
+          message: %Messages.BashExecutionMessage{
+            command: command,
+            output: "",
+            exclude_from_context: Keyword.get(opts, :exclude_from_context, false)
+          }
+        })
 
-      state = persist_new_messages(state)
+        bash_run = %{
+          task: task,
+          from: from,
+          command: command,
+          private?: Keyword.get(opts, :exclude_from_context, false)
+        }
 
-      forward_event(state, %AgentEvents.MessageEnd{message: message})
-
-      {:reply, {:ok, message}, state}
+        {:noreply, %__MODULE__{state | bash_run: bash_run}}
     end
+  end
+
+  def handle_call(:cancel_bash, _from, %__MODULE__{bash_run: nil} = state) do
+    {:reply, {:error, :no_command_running}, state}
+  end
+
+  def handle_call(:cancel_bash, _from, %__MODULE__{bash_run: %{task: task}} = state) do
+    Eva.Coding.ShellExec.cancel(task)
+    {:reply, :ok, state}
   end
 
   # -- handle_info --
@@ -521,6 +529,37 @@ defmodule Eva.Coding.Session do
     end
 
     {:noreply, state}
+  end
+
+  # Bash execution message handling (since ShellExec.run_async runs in a task)
+  # `ref` binds from the message and then has to match the task's own
+  def handle_info({ref, result}, %__MODULE__{bash_run: %{task: %Task{ref: ref}}} = state) do
+    # The task is finished; its DOWN is noise.
+    Process.demonitor(ref, [:flush])
+
+    run = state.bash_run
+    message = bash_message(run, result)
+
+    {:ok, _} =
+      Harness.update_messages(
+        state.harness_pid,
+        Harness.messages(state.harness_pid) ++ [message]
+      )
+
+    state = persist_new_messages(%__MODULE__{state | bash_run: nil})
+    forward_event(state, %AgentEvents.MessageEnd{message: message})
+    GenServer.reply(run.from, {:ok, message})
+
+    {:noreply, state}
+  end
+
+  # When the ShellExec.run_async task dies without result
+  def handle_info(
+        {:DOWN, ref, :process, _pid, reason},
+        %__MODULE__{bash_run: %{task: %Task{ref: ref}, from: from}} = state
+      ) do
+    GenServer.reply(from, {:error, {:bash_crashed, reason}})
+    {:noreply, %__MODULE__{state | bash_run: nil}}
   end
 
   @doc """
@@ -768,4 +807,35 @@ defmodule Eva.Coding.Session do
       nil -> {:error, :original_not_indexed}
     end
   end
+
+  defp bash_message(run, result) do
+    truncation = CodingTools.truncate_tail(result.output)
+
+    {output, full_output_path} =
+      if truncation.truncated do
+        path = CodingTools.write_temp_output(result.output)
+        {truncation.content <> CodingTools.build_truncation_suffix(truncation, path), path}
+      else
+        {truncation.content, nil}
+      end
+
+    %Messages.BashExecutionMessage{
+      command: run.command,
+      output: output <> status_suffix(result),
+      exit_code: result.exit_status,
+      cancelled: result.cancelled,
+      truncated: truncation.truncated,
+      full_output_path: full_output_path,
+      timestamp: Eva.Agent.Utils.current_timestamp_ms(),
+      exclude_from_context: run.private?
+    }
+  end
+
+  defp status_suffix(%{cancelled: true}), do: "\n\n[Command cancelled]"
+  defp status_suffix(%{timed_out: true}), do: "\n\n[Command timed out]"
+
+  defp status_suffix(%{exit_status: code}) when is_integer(code) and code != 0,
+    do: "\n\n[Command exited with code #{code}]"
+
+  defp status_suffix(_), do: ""
 end

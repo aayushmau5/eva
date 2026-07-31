@@ -18,6 +18,10 @@ defmodule RunBashHarness do
 
   def handle_call({:update_messages, messages}, _from, state),
     do: {:reply, {:ok, %{}}, %{state | messages: messages}}
+
+  def handle_call({:steer, _prompt}, _from, state), do: {:reply, :ok, state}
+
+  def handle_call({:follow_up, _prompt}, _from, state), do: {:reply, :ok, state}
 end
 
 defmodule Eva.Coding.SessionTest do
@@ -32,6 +36,15 @@ defmodule Eva.Coding.SessionTest do
   alias Eva.Agent.Events, as: AgentEvents
   alias Eva.Coding.SessionIndexManager
   alias Eva.Coding.Paths
+
+  defp fake_task do
+    %Task{
+      owner: self(),
+      pid: self(),
+      ref: make_ref(),
+      mfa: {__MODULE__, :fake, []}
+    }
+  end
 
   defp build_session_config(attrs \\ []) do
     %Session.SessionConfig{
@@ -675,13 +688,59 @@ defmodule Eva.Coding.SessionTest do
       assert result == {:error, :agent_running}
     end
 
-    test "executes command and returns {:ok, message}" do
+    test "returns {:error, :bash_running} when bash is already running" do
+      {:ok, harness} = RunBashHarness.start_link()
+      config = build_session_config()
+
+      state =
+        build_state(
+          config: config,
+          harness_pid: harness,
+          bash_run: %{
+            task: fake_task(),
+            from: {self(), make_ref()},
+            command: "sleep 100",
+            private?: false
+          }
+        )
+
+      {:reply, result, ^state} =
+        Session.handle_call({:run_bash, "echo hello", []}, nil, state)
+
+      assert result == {:error, :bash_running}
+    end
+
+    test "starts async execution and sets bash_run" do
       {:ok, harness} = RunBashHarness.start_link()
       config = build_session_config()
       state = build_state(config: config, harness_pid: harness)
+      from = {self(), make_ref()}
 
-      {:reply, {:ok, message}, _new_state} =
-        Session.handle_call({:run_bash, "echo hello", []}, nil, state)
+      {:noreply, state_with_bash} =
+        Session.handle_call({:run_bash, "echo hello", []}, from, state)
+
+      assert %{task: %Task{}, from: ^from, command: "echo hello"} = state_with_bash.bash_run
+      refute state_with_bash.bash_run.private?
+
+      task_ref = state_with_bash.bash_run.task.ref
+      assert_receive {^task_ref, _result}, 5000
+    end
+
+    test "completes async execution via handle_info — builds and returns message" do
+      {:ok, harness} = RunBashHarness.start_link()
+      config = build_session_config()
+      state = build_state(config: config, harness_pid: harness)
+      from = {self(), call_ref = make_ref()}
+
+      {:noreply, state_with_bash} =
+        Session.handle_call({:run_bash, "echo hello", []}, from, state)
+
+      task_ref = state_with_bash.bash_run.task.ref
+      assert_receive {^task_ref, result}, 5000
+
+      {:noreply, final_state} = Session.handle_info({task_ref, result}, state_with_bash)
+
+      assert_receive {^call_ref, {:ok, message}}, 1000
 
       assert %Messages.BashExecutionMessage{} = message
       assert message.command == "echo hello"
@@ -691,20 +750,31 @@ defmodule Eva.Coding.SessionTest do
       assert message.truncated == false
       assert message.full_output_path == nil
       refute message.exclude_from_context
+
+      assert final_state.bash_run == nil
     end
 
-    test "exclude_from_context opt is passed through to message" do
+    test "exclude_from_context opt is preserved through async flow" do
       {:ok, harness} = RunBashHarness.start_link()
       config = build_session_config()
       state = build_state(config: config, harness_pid: harness)
+      from = {self(), call_ref = make_ref()}
 
-      {:reply, {:ok, message}, _new_state} =
+      {:noreply, state_with_bash} =
         Session.handle_call(
           {:run_bash, "echo test", [exclude_from_context: true]},
-          nil,
+          from,
           state
         )
 
+      assert state_with_bash.bash_run.private?
+
+      task_ref = state_with_bash.bash_run.task.ref
+      assert_receive {^task_ref, result}, 5000
+
+      {:noreply, _final_state} = Session.handle_info({task_ref, result}, state_with_bash)
+
+      assert_receive {^call_ref, {:ok, message}}, 1000
       assert message.exclude_from_context
     end
 
@@ -712,21 +782,40 @@ defmodule Eva.Coding.SessionTest do
       {:ok, harness} = RunBashHarness.start_link()
       config = build_session_config()
       state = build_state(config: config, harness_pid: harness)
+      from = {self(), call_ref = make_ref()}
 
-      {:reply, {:ok, message}, _new_state} =
-        Session.handle_call({:run_bash, "exit 3", []}, nil, state)
+      {:noreply, state_with_bash} =
+        Session.handle_call({:run_bash, "exit 3", []}, from, state)
 
+      task_ref = state_with_bash.bash_run.task.ref
+      assert_receive {^task_ref, result}, 5000
+
+      {:noreply, _final_state} = Session.handle_info({task_ref, result}, state_with_bash)
+
+      assert_receive {^call_ref, {:ok, message}}, 1000
       assert message.exit_code == 3
+      assert String.contains?(message.output, "[Command exited with code 3]")
     end
 
-    test "forwards MessageEnd event to listener" do
+    test "forwards MessageStart and MessageEnd events to listener" do
       {:ok, harness} = RunBashHarness.start_link()
       config = build_session_config(listener_pid: self())
       state = build_state(config: config, harness_pid: harness)
+      from = {self(), call_ref = make_ref()}
 
-      {:reply, {:ok, message}, _new_state} =
-        Session.handle_call({:run_bash, "echo hello", []}, nil, state)
+      {:noreply, state_with_bash} =
+        Session.handle_call({:run_bash, "echo hello", []}, from, state)
 
+      assert_receive %AgentEvents.MessageStart{
+        message: %Messages.BashExecutionMessage{command: "echo hello", output: ""}
+      }
+
+      task_ref = state_with_bash.bash_run.task.ref
+      assert_receive {^task_ref, result}, 5000
+
+      {:noreply, _final_state} = Session.handle_info({task_ref, result}, state_with_bash)
+
+      assert_receive {^call_ref, {:ok, message}}, 1000
       assert_receive %AgentEvents.MessageEnd{message: ^message}
     end
 
@@ -734,12 +823,19 @@ defmodule Eva.Coding.SessionTest do
       {:ok, harness} = RunBashHarness.start_link()
       config = build_session_config()
       state = build_state(config: config, harness_pid: harness)
+      from = {self(), call_ref = make_ref()}
 
       large_cmd = "yes x | head -55000 | tr -d '\\n'"
 
-      {:reply, {:ok, message}, _new_state} =
-        Session.handle_call({:run_bash, large_cmd, []}, nil, state)
+      {:noreply, state_with_bash} =
+        Session.handle_call({:run_bash, large_cmd, []}, from, state)
 
+      task_ref = state_with_bash.bash_run.task.ref
+      assert_receive {^task_ref, result}, 5000
+
+      {:noreply, _final_state} = Session.handle_info({task_ref, result}, state_with_bash)
+
+      assert_receive {^call_ref, {:ok, message}}, 1000
       assert message.truncated
       assert message.full_output_path != nil
       assert String.contains?(message.output, "[Showing")
@@ -750,9 +846,17 @@ defmodule Eva.Coding.SessionTest do
       {:ok, harness} = RunBashHarness.start_link()
       config = build_session_config()
       state = build_state(config: config, harness_pid: harness)
+      from = {self(), call_ref = make_ref()}
 
-      {:reply, {:ok, _message}, _new_state} =
-        Session.handle_call({:run_bash, "echo persisted", []}, nil, state)
+      {:noreply, state_with_bash} =
+        Session.handle_call({:run_bash, "echo persisted", []}, from, state)
+
+      task_ref = state_with_bash.bash_run.task.ref
+      assert_receive {^task_ref, result}, 5000
+
+      {:noreply, _final_state} = Session.handle_info({task_ref, result}, state_with_bash)
+
+      assert_receive {^call_ref, {:ok, _message}}, 1000
 
       entries = Storage.read_all(config.storage)
 
@@ -762,6 +866,123 @@ defmodule Eva.Coding.SessionTest do
         end)
 
       assert length(bash_entries) == 1
+    end
+
+    test "adds status suffix for cancelled command" do
+      {:ok, harness} = RunBashHarness.start_link()
+      config = build_session_config()
+      state = build_state(config: config, harness_pid: harness)
+      from = {self(), call_ref = make_ref()}
+
+      {:noreply, state_with_bash} =
+        Session.handle_call({:run_bash, "sleep 10", []}, from, state)
+
+      task = state_with_bash.bash_run.task
+      Eva.Coding.ShellExec.cancel(task)
+
+      task_ref = task.ref
+      assert_receive {^task_ref, result}, 5000
+      assert result.cancelled
+
+      {:noreply, _final_state} = Session.handle_info({task_ref, result}, state_with_bash)
+
+      assert_receive {^call_ref, {:ok, message}}, 1000
+      assert String.contains?(message.output, "[Command cancelled]")
+    end
+
+    test "handles task crash (DOWN) and replies with error" do
+      {:ok, harness} = RunBashHarness.start_link()
+      config = build_session_config()
+      state = build_state(config: config, harness_pid: harness)
+      from = {self(), call_ref = make_ref()}
+
+      {:noreply, state_with_bash} =
+        Session.handle_call({:run_bash, "echo hello", []}, from, state)
+
+      task_ref = state_with_bash.bash_run.task.ref
+
+      # First consume the success result so the process has exited
+      assert_receive {^task_ref, _result}, 5000
+
+      # Simulate a DOWN message (normally sent after the process exits)
+      {:noreply, final_state} =
+        Session.handle_info({:DOWN, task_ref, :process, nil, :killed}, state_with_bash)
+
+      assert_receive {^call_ref, {:error, {:bash_crashed, :killed}}}, 1000
+      assert final_state.bash_run == nil
+    end
+  end
+
+  describe "cancel_bash/1" do
+    test "sends cancel signal and returns :ok when bash is running" do
+      {:ok, harness} = RunBashHarness.start_link()
+      config = build_session_config()
+      state = build_state(config: config, harness_pid: harness)
+      from = {self(), make_ref()}
+
+      {:noreply, state_with_bash} =
+        Session.handle_call({:run_bash, "sleep 10", []}, from, state)
+
+      {:reply, :ok, _state} = Session.handle_call(:cancel_bash, nil, state_with_bash)
+
+      task_ref = state_with_bash.bash_run.task.ref
+      assert_receive {^task_ref, result}, 5000
+      assert result.cancelled
+    end
+
+    test "returns {:error, :no_command_running} when nothing is running" do
+      {:ok, harness} = RunBashHarness.start_link()
+      config = build_session_config()
+      state = build_state(config: config, harness_pid: harness)
+
+      {:reply, result, ^state} = Session.handle_call(:cancel_bash, nil, state)
+
+      assert result == {:error, :no_command_running}
+    end
+  end
+
+  describe "handle_call :prompt with bash running" do
+    test "returns :ok with {:error, :agent_running} status when bash is running" do
+      {:ok, harness} = RunBashHarness.start_link()
+      config = build_session_config()
+
+      state =
+        build_state(
+          config: config,
+          harness_pid: harness,
+          bash_run: %{
+            task: fake_task(),
+            from: {self(), make_ref()},
+            command: "sleep 100",
+            private?: false
+          }
+        )
+
+      {:reply, result, ^state} =
+        Session.handle_call({:prompt, "hello", :steer}, nil, state)
+
+      assert result == :ok
+    end
+
+    test "returns :ok when harness is running with :follow_up" do
+      {:ok, harness} = RunBashHarness.start_link()
+
+      state =
+        build_state(
+          config: build_session_config(),
+          harness_pid: harness,
+          bash_run: %{
+            task: fake_task(),
+            from: {self(), make_ref()},
+            command: "sleep 100",
+            private?: false
+          }
+        )
+
+      {:reply, result, ^state} =
+        Session.handle_call({:prompt, "hello", :follow_up}, nil, state)
+
+      assert result == :ok
     end
   end
 
