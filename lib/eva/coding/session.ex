@@ -147,6 +147,11 @@ defmodule Eva.Coding.Session do
     GenServer.call(pid, :list_mcp_servers)
   end
 
+  @spec rename_session(pid(), String.t()) :: String.t()
+  def rename_session(pid, name) do
+    GenServer.call(pid, {:rename_session, name})
+  end
+
   @doc """
   Enables or disables an MCP server.
 
@@ -325,6 +330,20 @@ defmodule Eva.Coding.Session do
       {:error, reason} ->
         {:reply, {:error, reason}, state}
     end
+  end
+
+  def handle_call({:rename_session, name}, _from, state) do
+    if not is_nil(name) and not is_nil(state.config.session_id) do
+      SessionIndexManager.touch_session(
+        state.config.session_index_manager,
+        state.config.session_id,
+        nil,
+        nil,
+        name
+      )
+    end
+
+    {:reply, name, state}
   end
 
   # -- handle_info --

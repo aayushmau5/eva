@@ -69,7 +69,9 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
         - [x] Using exa MCP
         - [ ] Brave search API
       - [ ] Web fetch
-        - [ ] With multiple output format: markdown, html
+        - [x] Using exa MCP (responds in markdown)
+        - [ ] In house (using finch/req) with multiple output format: markdown, html
+          - [ ] JS rendered pages? Should be a lightweight implementation
   - [ ] Subagents
   - [ ] UI agnostic commands layer
   - [ ] Modes or Characters(?)(like amp)
