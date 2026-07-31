@@ -4,6 +4,12 @@ defmodule Eva.Coding.SessionTest do
   alias Eva.Coding.Session
   alias Eva.MCP.Events
 
+  alias Eva.Agent.Session.{Storage, Entries}
+  alias Eva.Agent.Session.State, as: SessionState
+  alias Eva.Agent.Messages
+  alias Eva.Coding.SessionIndexManager
+  alias Eva.Coding.Paths
+
   defp build_session_config(attrs \\ []) do
     %Session.SessionConfig{
       cwd: File.cwd!(),
@@ -250,6 +256,388 @@ defmodule Eva.Coding.SessionTest do
         {:noreply, _} = Session.handle_info(event, state)
         assert_received %{__struct__: ^mod}
       end
+    end
+  end
+
+  describe "fork/2" do
+    setup do
+      tmp =
+        Path.join(
+          System.tmp_dir!(),
+          "fork_test_#{System.unique_integer([:positive, :monotonic])}"
+        )
+
+      File.mkdir_p!(tmp)
+
+      paths = %Paths{home: tmp}
+      manager = SessionIndexManager.new(paths)
+      cwd = "/home/fork-project"
+
+      # Create an index entry for the original session
+      original =
+        SessionIndexManager.create_index(manager, %{cwd: cwd, model: "gpt-4", title: "My session"})
+
+      # Create storage with some messages
+      storage = Eva.Agent.Session.Storage.Jsonl.new(original.session_path)
+
+      # Write initial entries
+      info = Entries.SessionInfo.new(%{cwd: cwd})
+      model = Entries.ModelChange.new(%{parent_id: info.id, model: "gpt-4"})
+      thinking = Entries.ThinkingLevelChange.new(%{parent_id: model.id, thinking_level: "medium"})
+
+      # First user message
+      user1 =
+        Entries.Message.new(%{
+          parent_id: thinking.id,
+          message: %Messages.UserMessage{content: "First message"}
+        })
+
+      leaf1 = Entries.Leaf.new(%{parent_id: user1.id, entry_id: user1.id})
+
+      # Assistant response
+      asst1 =
+        Entries.Message.new(%{
+          parent_id: user1.id,
+          message: %Messages.AssistantMessage{content: [%Messages.TextContent{text: "Hello!"}]}
+        })
+
+      leaf2 = Entries.Leaf.new(%{parent_id: asst1.id, entry_id: asst1.id})
+
+      # Second user message (the fork point)
+      user2 =
+        Entries.Message.new(%{
+          parent_id: asst1.id,
+          message: %Messages.UserMessage{content: "Second message"}
+        })
+
+      leaf3 = Entries.Leaf.new(%{parent_id: user2.id, entry_id: user2.id})
+
+      all_entries = [info, model, thinking, user1, leaf1, asst1, leaf2, user2, leaf3]
+
+      Enum.each(all_entries, fn entry ->
+        Storage.append(storage, entry)
+      end)
+
+      on_exit(fn -> File.rm_rf!(tmp) end)
+
+      {:ok,
+       tmp: tmp,
+       manager: manager,
+       original: original,
+       storage: storage,
+       entries: all_entries,
+       user1: user1,
+       user2: user2,
+       asst1: asst1,
+       leaf3: leaf3}
+    end
+
+    defp build_fork_state(attrs) do
+      config = build_session_config()
+
+      struct(
+        Session,
+        Keyword.merge(
+          [
+            provider_pid: self(),
+            harness_pid: self(),
+            session_state: nil,
+            last_parent_id: nil,
+            skills: [],
+            prompt_templates: [],
+            context_files: [],
+            resource_diagnostics: [],
+            command_registry: [],
+            pending_initial_entries: [],
+            mcp: %Eva.MCP.SessionServers{},
+            config: config,
+            provider_config: config.provider_config
+          ],
+          attrs
+        )
+      )
+    end
+
+    test "forks at a user message and returns {:ok, session_id, title, prefill_text}", ctx do
+      state =
+        build_fork_state(
+          config: %Session.SessionConfig{
+            cwd: "/home/fork-project",
+            storage: ctx.storage,
+            model: "gpt-4",
+            provider_config: fake_provider_config(),
+            session_id: ctx.original.id,
+            session_index_manager: ctx.manager
+          },
+          last_parent_id: ctx.leaf3.entry_id
+        )
+
+      {:reply, result, _state} = Session.handle_call({:fork, ctx.user2.id}, nil, state)
+
+      assert {:ok, forked_id, fork_title, prefill_text} = result
+      assert is_binary(forked_id)
+      assert forked_id != ctx.original.id
+      assert fork_title == "fork: My session"
+      assert prefill_text == "Second message"
+    end
+
+    test "forked JSONL contains entries up to but not including the fork point", ctx do
+      state =
+        build_fork_state(
+          config: %Session.SessionConfig{
+            cwd: "/home/fork-project",
+            storage: ctx.storage,
+            model: "gpt-4",
+            provider_config: fake_provider_config(),
+            session_id: ctx.original.id,
+            session_index_manager: ctx.manager
+          },
+          last_parent_id: ctx.leaf3.entry_id
+        )
+
+      {:reply, {:ok, forked_id, _, _}, _state} =
+        Session.handle_call({:fork, ctx.user2.id}, nil, state)
+
+      # Retrieve the forked session index entry and read its transcript
+      forked_entry = SessionIndexManager.get_session(ctx.manager, forked_id)
+      refute is_nil(forked_entry)
+
+      forked_entries =
+        Storage.read_all(Eva.Agent.Session.Storage.Jsonl.new(forked_entry.session_path))
+
+      # Should contain initial entries + user1 + leaf1 + asst1 + leaf2, but NOT user2 or leaf3
+      entry_ids = MapSet.new(forked_entries, & &1.id)
+      assert MapSet.member?(entry_ids, ctx.user1.id)
+      assert MapSet.member?(entry_ids, ctx.asst1.id)
+      refute MapSet.member?(entry_ids, ctx.user2.id)
+      refute MapSet.member?(entry_ids, ctx.leaf3.id)
+    end
+
+    test "original session gets a Custom fork entry appended", ctx do
+      state =
+        build_fork_state(
+          config: %Session.SessionConfig{
+            cwd: "/home/fork-project",
+            storage: ctx.storage,
+            model: "gpt-4",
+            provider_config: fake_provider_config(),
+            session_id: ctx.original.id,
+            session_index_manager: ctx.manager
+          },
+          last_parent_id: ctx.leaf3.entry_id
+        )
+
+      old_count = Storage.read_all(ctx.storage) |> length()
+
+      {:reply, {:ok, forked_id, _, _}, _state} =
+        Session.handle_call({:fork, ctx.user2.id}, nil, state)
+
+      entries_after = Storage.read_all(ctx.storage)
+      # Should have one extra Custom entry
+      assert length(entries_after) == old_count + 1
+
+      fork_custom = Enum.find(entries_after, &(&1.type == "custom" and &1.namespace == "fork"))
+      refute is_nil(fork_custom)
+      assert fork_custom.data["forked_session_id"] == forked_id
+      assert fork_custom.data["forked_from_entry_id"] == ctx.user2.id
+      assert fork_custom.data["title"] == "fork: My session"
+    end
+
+    test "updates last_parent_id to the fork entry", ctx do
+      state =
+        build_fork_state(
+          config: %Session.SessionConfig{
+            cwd: "/home/fork-project",
+            storage: ctx.storage,
+            model: "gpt-4",
+            provider_config: fake_provider_config(),
+            session_id: ctx.original.id,
+            session_index_manager: ctx.manager
+          },
+          last_parent_id: ctx.leaf3.entry_id
+        )
+
+      {:reply, {:ok, _, _, _}, new_state} =
+        Session.handle_call({:fork, ctx.user2.id}, nil, state)
+
+      # last_parent_id should now point to the fork Custom entry
+      assert new_state.last_parent_id != state.last_parent_id
+      entries = Storage.read_all(ctx.storage)
+      fork_custom = Enum.find(entries, &(&1.type == "custom" and &1.namespace == "fork"))
+      assert new_state.last_parent_id == fork_custom.id
+    end
+
+    test "forked session can be replayed without errors", ctx do
+      state =
+        build_fork_state(
+          config: %Session.SessionConfig{
+            cwd: "/home/fork-project",
+            storage: ctx.storage,
+            model: "gpt-4",
+            provider_config: fake_provider_config(),
+            session_id: ctx.original.id,
+            session_index_manager: ctx.manager
+          },
+          last_parent_id: ctx.leaf3.entry_id
+        )
+
+      {:reply, {:ok, forked_id, _, _}, _state} =
+        Session.handle_call({:fork, ctx.user2.id}, nil, state)
+
+      forked_entry = SessionIndexManager.get_session(ctx.manager, forked_id)
+
+      forked_entries =
+        Storage.read_all(Eva.Agent.Session.Storage.Jsonl.new(forked_entry.session_path))
+
+      # No Leaf entries in the forked copy (only path entries), so replay without a leaf
+      session_state = SessionState.from_entries(forked_entries)
+      assert length(session_state.messages) == 2
+    end
+
+    test "returns {:error, {:entry_not_found, _}} for unknown entry_id", ctx do
+      state =
+        build_fork_state(
+          config: %Session.SessionConfig{
+            cwd: "/home/fork-project",
+            storage: ctx.storage,
+            model: "gpt-4",
+            provider_config: fake_provider_config(),
+            session_id: ctx.original.id,
+            session_index_manager: ctx.manager
+          },
+          last_parent_id: ctx.leaf3.entry_id
+        )
+
+      {:reply, result, _state} =
+        Session.handle_call({:fork, "nonexistent-id"}, nil, state)
+
+      assert result == {:error, {:entry_not_found, "nonexistent-id"}}
+    end
+
+    test "forking at the first message works (empty copy_entries)", ctx do
+      state =
+        build_fork_state(
+          config: %Session.SessionConfig{
+            cwd: "/home/fork-project",
+            storage: ctx.storage,
+            model: "gpt-4",
+            provider_config: fake_provider_config(),
+            session_id: ctx.original.id,
+            session_index_manager: ctx.manager
+          },
+          last_parent_id: ctx.leaf3.entry_id
+        )
+
+      {:reply, {:ok, forked_id, _, prefill_text}, _state} =
+        Session.handle_call({:fork, ctx.user1.id}, nil, state)
+
+      assert prefill_text == "First message"
+
+      forked_entry = SessionIndexManager.get_session(ctx.manager, forked_id)
+
+      forked_entries =
+        Storage.read_all(Eva.Agent.Session.Storage.Jsonl.new(forked_entry.session_path))
+
+      # Only initial entries (session_info, model_change, thinking_level_change), no messages
+      entry_ids = MapSet.new(forked_entries, & &1.id)
+      refute MapSet.member?(entry_ids, ctx.user1.id)
+    end
+
+    test "multiple forks create independent sessions", ctx do
+      state =
+        build_fork_state(
+          config: %Session.SessionConfig{
+            cwd: "/home/fork-project",
+            storage: ctx.storage,
+            model: "gpt-4",
+            provider_config: fake_provider_config(),
+            session_id: ctx.original.id,
+            session_index_manager: ctx.manager
+          },
+          last_parent_id: ctx.leaf3.entry_id
+        )
+
+      {:reply, {:ok, fork1_id, _, _}, state1} =
+        Session.handle_call({:fork, ctx.user2.id}, nil, state)
+
+      {:reply, {:ok, fork2_id, _, _}, _state2} =
+        Session.handle_call({:fork, ctx.user2.id}, nil, state1)
+
+      assert fork1_id != fork2_id
+
+      forked1_entry = SessionIndexManager.get_session(ctx.manager, fork1_id)
+      forked2_entry = SessionIndexManager.get_session(ctx.manager, fork2_id)
+      refute is_nil(forked1_entry)
+      refute is_nil(forked2_entry)
+
+      # Original JSONL has 2 fork Custom entries
+      originals = Storage.read_all(ctx.storage)
+      fork_entries = Enum.filter(originals, &(&1.type == "custom" and &1.namespace == "fork"))
+      assert length(fork_entries) == 2
+    end
+
+    test "returns {:error, :original_not_indexed} when session is not in the index", %{
+      tmp: tmp
+    } do
+      # Create a storage that isn't associated with any indexed session
+      storage_path = Path.join(tmp, "unindexed.jsonl")
+      storage = Eva.Agent.Session.Storage.Jsonl.new(storage_path)
+
+      info = Entries.SessionInfo.new(%{cwd: "/some/cwd"})
+      model = Entries.ModelChange.new(%{parent_id: info.id, model: "gpt-4"})
+      thinking = Entries.ThinkingLevelChange.new(%{parent_id: model.id, thinking_level: "medium"})
+
+      user =
+        Entries.Message.new(%{
+          parent_id: thinking.id,
+          message: %Messages.UserMessage{content: "Hello"}
+        })
+
+      leaf = Entries.Leaf.new(%{parent_id: user.id, entry_id: user.id})
+
+      Enum.each([info, model, thinking, user, leaf], fn e -> Storage.append(storage, e) end)
+
+      paths = %Paths{home: tmp}
+      manager = SessionIndexManager.new(paths)
+
+      state =
+        build_fork_state(
+          config: %Session.SessionConfig{
+            cwd: "/some/cwd",
+            storage: storage,
+            model: "gpt-4",
+            provider_config: fake_provider_config(),
+            session_id: "unindexed-session",
+            session_index_manager: manager
+          },
+          last_parent_id: leaf.entry_id
+        )
+
+      {:reply, result, _state} = Session.handle_call({:fork, user.id}, nil, state)
+      assert result == {:error, :original_not_indexed}
+    end
+
+    test "forked session appears in list_sessions", ctx do
+      state =
+        build_fork_state(
+          config: %Session.SessionConfig{
+            cwd: "/home/fork-project",
+            storage: ctx.storage,
+            model: "gpt-4",
+            provider_config: fake_provider_config(),
+            session_id: ctx.original.id,
+            session_index_manager: ctx.manager
+          },
+          last_parent_id: ctx.leaf3.entry_id
+        )
+
+      {:reply, {:ok, forked_id, fork_title, _}, _state} =
+        Session.handle_call({:fork, ctx.user2.id}, nil, state)
+
+      sessions = SessionIndexManager.list_sessions(ctx.manager, "/home/fork-project")
+      forked = Enum.find(sessions, &(&1.id == forked_id))
+      refute is_nil(forked)
+      assert forked.title == fork_title
     end
   end
 

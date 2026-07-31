@@ -153,6 +153,21 @@ defmodule Eva.Coding.Session do
   end
 
   @doc """
+  Forks the current session at the given entry(typically a user message).
+
+  All entries on the path from root up to *but not including* the fork
+  point are copied into a new standalone session JSONL file.
+
+  The fork point entry's text content is returned as `prefill_text`.
+  """
+  @spec fork(pid(), String.t()) ::
+          {:ok, session_id :: String.t(), title :: String.t(), prefill_text :: String.t()}
+          | {:error, term()}
+  def fork(pid, entry_id) do
+    GenServer.call(pid, {:fork, entry_id})
+  end
+
+  @doc """
   Enables or disables an MCP server.
 
   `:session` records the choice in this session's transcript, so it survives a resume
@@ -344,6 +359,68 @@ defmodule Eva.Coding.Session do
     end
 
     {:reply, name, state}
+  end
+
+  def handle_call({:fork, entry_id}, _from, %__MODULE__{} = state) do
+    entries = Storage.read_all(state.config.storage)
+    by_id = Eva.Agent.Session.Tree.entries_by_id(entries)
+
+    case Map.get(by_id, entry_id) do
+      nil ->
+        {:reply, {:error, {:entry_not_found, entry_id}}, state}
+
+      %Entries.Message{message: %Messages.UserMessage{}} = fork_point ->
+        prefill_text = get_user_message_text(fork_point)
+
+        copy_entries =
+          if fork_point.parent_id do
+            Eva.Agent.Session.Tree.path_to_entry(entries, fork_point.parent_id)
+          else
+            []
+          end
+
+        case get_original_index(state) do
+          {:ok, index} ->
+            fork_title = "fork: #{index.title || "unnamed"}"
+
+            fork_index =
+              SessionIndexManager.prepare_fork_index(
+                state.config.session_index_manager,
+                index,
+                fork_title
+              )
+
+            SessionIndexManager.index_session!(state.config.session_index_manager, fork_index)
+
+            fork_storage = Storage.Jsonl.new(fork_index.session_path)
+
+            # Copy over each entry to new forked session file
+            Enum.each(copy_entries, fn entry ->
+              :ok = Storage.append(fork_storage, entry)
+            end)
+
+            fork_entry =
+              Entries.Custom.new(%{
+                parent_id: state.last_parent_id,
+                namespace: "fork",
+                data: %{
+                  title: fork_title,
+                  forked_session_id: fork_index.id,
+                  forked_from_entry_id: entry_id
+                }
+              })
+
+            # For a client to build a list of forked message, they'll have to scan through the entries.
+            # We can optimise this for the client later.
+            :ok = Storage.append(state.config.storage, fork_entry)
+
+            {:reply, {:ok, fork_index.id, fork_title, prefill_text},
+             %__MODULE__{state | last_parent_id: fork_entry.id}}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
+    end
   end
 
   # -- handle_info --
@@ -629,5 +706,19 @@ defmodule Eva.Coding.Session do
       not state.config.defer_index? and
       not is_nil(state.config.session_id) and
       state.config.session_id != ""
+  end
+
+  defp get_user_message_text(%Entries.Message{message: %Messages.UserMessage{} = message}) do
+    Messages.UserMessage.text(message)
+  end
+
+  defp get_original_index(state) do
+    case SessionIndexManager.get_session(
+           state.config.session_index_manager,
+           state.config.session_id
+         ) do
+      %Entries.SessionIndexEntry{} = entry -> {:ok, entry}
+      nil -> {:error, :original_not_indexed}
+    end
   end
 end

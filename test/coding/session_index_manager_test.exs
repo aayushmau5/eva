@@ -429,4 +429,60 @@ defmodule Eva.Coding.SessionIndexManagerTest do
       assert Manager.delete_session(new_manager(@tmp_root), "nope") == {:error, :not_found}
     end
   end
+
+  describe "prepare_fork_index/3" do
+    test "generates a new session_id and path in the same project directory", %{tmp: tmp} do
+      manager = new_manager(tmp)
+      cwd = Path.expand("~/fork-test")
+
+      original = Manager.create_index(manager, %{cwd: cwd, model: "gpt-4"})
+
+      forked = Manager.prepare_fork_index(manager, original, "fork: test")
+
+      assert forked.id != original.id
+      assert is_binary(forked.id) and byte_size(forked.id) > 0
+      assert Path.dirname(forked.session_path) == Path.dirname(original.session_path)
+      assert File.dir?(Path.dirname(forked.session_path))
+    end
+
+    test "inherits cwd, model, and provider_name from the original", %{tmp: tmp} do
+      manager = new_manager(tmp)
+      cwd = Path.expand("~/inherit-test")
+
+      original =
+        Manager.create_index(manager, %{
+          cwd: cwd,
+          model: "claude-sonnet",
+          provider_name: "anthropic"
+        })
+
+      forked = Manager.prepare_fork_index(manager, original, "fork: inherits")
+
+      assert forked.cwd == original.cwd
+      assert forked.model == original.model
+      assert forked.provider_name == original.provider_name
+    end
+
+    test "sets the fork_title as the title", %{tmp: tmp} do
+      manager = new_manager(tmp)
+      cwd = "/some/project"
+
+      original = Manager.create_index(manager, %{cwd: cwd, model: "gpt-4", title: "Original"})
+
+      forked = Manager.prepare_fork_index(manager, original, "fork: Original")
+
+      assert forked.title == "fork: Original"
+    end
+
+    test "does not persist the entry — caller must call index_session!", %{tmp: tmp} do
+      manager = new_manager(tmp)
+      cwd = "/some/project"
+
+      original = Manager.create_index(manager, %{cwd: cwd, model: "gpt-4"})
+
+      forked = Manager.prepare_fork_index(manager, original, "fork: test")
+
+      assert is_nil(Manager.get_session(manager, forked.id))
+    end
+  end
 end

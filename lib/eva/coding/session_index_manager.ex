@@ -141,6 +141,33 @@ defmodule Eva.Coding.SessionIndexManager do
   end
 
   @doc """
+  Prepares the index entry for a forked session. Generates a new session ID and session path
+  in the same project directory as the original.
+  """
+  @spec prepare_fork_index(t(), SessionIndexEntry.t(), String.t()) :: SessionIndexEntry.t()
+  def prepare_fork_index(
+        %__MODULE__{},
+        %SessionIndexEntry{} = original,
+        fork_title
+      ) do
+    session_id = Utils.new_entry_id()
+
+    session_path =
+      original.session_path |> Path.dirname() |> Path.join("#{session_id}.jsonl")
+
+    :ok = File.mkdir_p!(Path.dirname(session_path))
+
+    SessionIndexEntry.new(%{
+      id: session_id,
+      session_path: session_path,
+      cwd: original.cwd,
+      model: original.model,
+      provider_name: original.provider_name,
+      title: fork_title
+    })
+  end
+
+  @doc """
   Removes a session from its project index and deletes its transcript.
 
   This is not recoverable: the conversation is gone once the `.jsonl` is unlinked.
