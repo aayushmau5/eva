@@ -361,9 +361,19 @@ defmodule Eva.AI.OpenAICompatibleProvider do
         %Messages.CompactionSummaryMessage{} = compaction_summary_message ->
           %{role: "user", content: compaction_summary_message.summary}
 
+        %Messages.BashExecutionMessage{exclude_from_context: true} ->
+          nil
+
+        # This is different from bash tool execution(it arrives as ToolResultMessage)
         %Messages.BashExecutionMessage{} = bash_execution_message ->
-          %{role: "user", content: bash_execution_message.output}
+          body =
+            if bash_execution_message.output == "",
+              do: "(no output)",
+              else: bash_execution_message.output
+
+          %{role: "user", content: "$ #{bash_execution_message.command}\n\n#{body}"}
       end)
+      |> Enum.reject(&is_nil/1)
 
     system ++ messages
   end

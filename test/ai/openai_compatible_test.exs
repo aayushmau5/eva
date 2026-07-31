@@ -722,7 +722,19 @@ defmodule Eva.AI.OpenAICompatibleProviderTest do
 
     messages = run_one_stream([bash])
 
-    [%{"role" => "system"}, %{"role" => "user", "content" => "file.txt"}] = messages
+    [%{"role" => "system"}, %{"role" => "user", "content" => "$ ls\n\nfile.txt"}] = messages
+  end
+
+  test "BashExecutionMessage with exclude_from_context is filtered out" do
+    bash = %Messages.BashExecutionMessage{
+      command: "ls",
+      output: "file.txt",
+      exclude_from_context: true
+    }
+
+    messages = run_one_stream([bash])
+
+    [%{"role" => "system"}] = messages
   end
 
   test "multiple messages preserve order after the system prompt" do

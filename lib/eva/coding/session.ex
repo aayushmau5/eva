@@ -167,6 +167,12 @@ defmodule Eva.Coding.Session do
     GenServer.call(pid, {:fork, entry_id})
   end
 
+  @spec run_bash(pid(), String.t(), keyword()) ::
+          {:ok, Messages.BashExecutionMessage.t()} | {:error, term()}
+  def run_bash(pid, command, opts \\ []) do
+    GenServer.call(pid, {:run_bash, command, opts}, :infinity)
+  end
+
   @doc """
   Enables or disables an MCP server.
 
@@ -420,6 +426,47 @@ defmodule Eva.Coding.Session do
           {:error, reason} ->
             {:reply, {:error, reason}, state}
         end
+    end
+  end
+
+  def handle_call({:run_bash, command, opts}, _from, %__MODULE__{} = state) do
+    if Harness.running?(state.harness_pid) do
+      {:reply, {:error, :agent_running}, state}
+    else
+      timeout = Keyword.get(opts, :timeout, 120_000)
+      result = Eva.Coding.ShellExec.run(command, cwd: state.config.cwd, timeout: timeout)
+      truncation = CodingTools.truncate_tail(result.output)
+
+      {output, full_output_path} =
+        if truncation.truncated do
+          path = CodingTools.write_temp_output(result.output)
+          {truncation.content <> CodingTools.build_truncation_suffix(truncation, path), path}
+        else
+          {truncation.content, nil}
+        end
+
+      message = %Messages.BashExecutionMessage{
+        command: command,
+        output: output,
+        exit_code: result.exit_status,
+        cancelled: result.cancelled,
+        truncated: truncation.truncated,
+        full_output_path: full_output_path,
+        timestamp: Eva.Agent.Utils.current_timestamp_ms(),
+        exclude_from_context: Keyword.get(opts, :exclude_from_context, false)
+      }
+
+      {:ok, _} =
+        Harness.update_messages(
+          state.harness_pid,
+          Harness.messages(state.harness_pid) ++ [message]
+        )
+
+      state = persist_new_messages(state)
+
+      forward_event(state, %AgentEvents.MessageEnd{message: message})
+
+      {:reply, {:ok, message}, state}
     end
   end
 

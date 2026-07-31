@@ -1,3 +1,25 @@
+defmodule RunBashHarness do
+  use GenServer
+
+  def start_link(running? \\ false, initial_messages \\ []) do
+    GenServer.start_link(__MODULE__, %{
+      running?: running?,
+      messages: initial_messages
+    })
+  end
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call(:running_status, _from, state), do: {:reply, state.running?, state}
+
+  def handle_call(:messages, _from, state), do: {:reply, state.messages, state}
+
+  def handle_call({:update_messages, messages}, _from, state),
+    do: {:reply, {:ok, %{}}, %{state | messages: messages}}
+end
+
 defmodule Eva.Coding.SessionTest do
   use ExUnit.Case, async: false
 
@@ -7,6 +29,7 @@ defmodule Eva.Coding.SessionTest do
   alias Eva.Agent.Session.{Storage, Entries}
   alias Eva.Agent.Session.State, as: SessionState
   alias Eva.Agent.Messages
+  alias Eva.Agent.Events, as: AgentEvents
   alias Eva.Coding.SessionIndexManager
   alias Eva.Coding.Paths
 
@@ -638,6 +661,107 @@ defmodule Eva.Coding.SessionTest do
       forked = Enum.find(sessions, &(&1.id == forked_id))
       refute is_nil(forked)
       assert forked.title == fork_title
+    end
+  end
+
+  describe "run_bash/3" do
+    test "returns {:error, :agent_running} when harness is running" do
+      {:ok, harness} = RunBashHarness.start_link(true)
+      config = build_session_config()
+      state = build_state(config: config, harness_pid: harness)
+
+      {:reply, result, ^state} = Session.handle_call({:run_bash, "echo hello", []}, nil, state)
+
+      assert result == {:error, :agent_running}
+    end
+
+    test "executes command and returns {:ok, message}" do
+      {:ok, harness} = RunBashHarness.start_link()
+      config = build_session_config()
+      state = build_state(config: config, harness_pid: harness)
+
+      {:reply, {:ok, message}, _new_state} =
+        Session.handle_call({:run_bash, "echo hello", []}, nil, state)
+
+      assert %Messages.BashExecutionMessage{} = message
+      assert message.command == "echo hello"
+      assert String.contains?(message.output, "hello")
+      assert message.exit_code == 0
+      assert message.cancelled == false
+      assert message.truncated == false
+      assert message.full_output_path == nil
+      refute message.exclude_from_context
+    end
+
+    test "exclude_from_context opt is passed through to message" do
+      {:ok, harness} = RunBashHarness.start_link()
+      config = build_session_config()
+      state = build_state(config: config, harness_pid: harness)
+
+      {:reply, {:ok, message}, _new_state} =
+        Session.handle_call(
+          {:run_bash, "echo test", [exclude_from_context: true]},
+          nil,
+          state
+        )
+
+      assert message.exclude_from_context
+    end
+
+    test "non-zero exit code is captured" do
+      {:ok, harness} = RunBashHarness.start_link()
+      config = build_session_config()
+      state = build_state(config: config, harness_pid: harness)
+
+      {:reply, {:ok, message}, _new_state} =
+        Session.handle_call({:run_bash, "exit 3", []}, nil, state)
+
+      assert message.exit_code == 3
+    end
+
+    test "forwards MessageEnd event to listener" do
+      {:ok, harness} = RunBashHarness.start_link()
+      config = build_session_config(listener_pid: self())
+      state = build_state(config: config, harness_pid: harness)
+
+      {:reply, {:ok, message}, _new_state} =
+        Session.handle_call({:run_bash, "echo hello", []}, nil, state)
+
+      assert_receive %AgentEvents.MessageEnd{message: ^message}
+    end
+
+    test "truncates large output and provides full_output_path" do
+      {:ok, harness} = RunBashHarness.start_link()
+      config = build_session_config()
+      state = build_state(config: config, harness_pid: harness)
+
+      large_cmd = "yes x | head -55000 | tr -d '\\n'"
+
+      {:reply, {:ok, message}, _new_state} =
+        Session.handle_call({:run_bash, large_cmd, []}, nil, state)
+
+      assert message.truncated
+      assert message.full_output_path != nil
+      assert String.contains?(message.output, "[Showing")
+      assert String.contains?(message.output, "Full output:")
+    end
+
+    test "persists message to storage" do
+      {:ok, harness} = RunBashHarness.start_link()
+      config = build_session_config()
+      state = build_state(config: config, harness_pid: harness)
+
+      {:reply, {:ok, _message}, _new_state} =
+        Session.handle_call({:run_bash, "echo persisted", []}, nil, state)
+
+      entries = Storage.read_all(config.storage)
+
+      bash_entries =
+        Enum.filter(entries, fn e ->
+          match?(%Entries.Message{message: %Messages.BashExecutionMessage{}}, e)
+        end)
+
+      assert length(bash_entries) == 1
     end
   end
 

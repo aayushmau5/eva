@@ -530,11 +530,13 @@ defmodule Eva.Coding.Tools do
     end
   end
 
-  defp truncate_tail(
-         content,
-         max_lines \\ @default_max_output_lines,
-         max_bytes \\ @default_max_output_bytes
-       ) do
+  @doc false
+  # Also in usage for direct User bash call
+  def truncate_tail(
+        content,
+        max_lines \\ @default_max_output_lines,
+        max_bytes \\ @default_max_output_bytes
+      ) do
     lines = split_lines_for_counting(content)
     total_lines = length(lines)
     total_bytes = byte_size(content)
@@ -739,14 +741,18 @@ defmodule Eva.Coding.Tools do
       end)
   end
 
-  defp write_temp_output(output) do
+  @doc false
+  # Also in usage for direct User bash call
+  def write_temp_output(output) do
     suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
     path = Path.join(System.tmp_dir!(), "eva_bash_output_#{suffix}.txt")
     File.write!(path, output)
     path
   end
 
-  defp build_truncation_suffix(truncation, full_path) do
+  @doc false
+  # Also in usage for direct User bash call
+  def build_truncation_suffix(truncation, full_path) do
     if truncation.last_line_partial do
       "\n\n[Showing last #{format_size(truncation.output_bytes)} of line #{truncation.total_lines}. Full output: #{full_path}]"
     else
