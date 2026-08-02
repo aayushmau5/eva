@@ -62,6 +62,17 @@ defmodule Eva.Coding.Resources do
     dedup_paths(dirs)
   end
 
+  def extensions_dir(%__MODULE__{} = resources) do
+    dirs = [Path.join(resources.root, "extensions")]
+
+    dirs =
+      if not is_nil(resources.cwd),
+        do: dirs ++ [Path.join([resources.cwd, ".eva", "extensions"])],
+        else: dirs
+
+    dedup_paths(dirs)
+  end
+
   defp dedup_paths(paths) do
     paths
     |> Enum.map(&Path.expand/1)

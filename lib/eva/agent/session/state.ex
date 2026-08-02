@@ -107,6 +107,23 @@ defmodule Eva.Agent.Session.State do
     end)
   end
 
+  @doc """
+  Session-scoped extension enable/disable choices, replayed from the transcript.
+
+  Absent from the map means no choice was recorded, which reads as enabled.
+  """
+  @spec extension_overrides(t()) :: %{String.t() => boolean()}
+  def extension_overrides(%__MODULE__{custom_entries: entries}) do
+    Enum.reduce(entries, %{}, fn
+      %Entries.Custom{namespace: "extension", data: %{"name" => name, "enabled" => enabled}}, acc
+      when is_binary(name) and is_boolean(enabled) ->
+        Map.put(acc, name, enabled)
+
+      _entry, acc ->
+        acc
+    end)
+  end
+
   @spec mcp_overrides(t()) :: %{String.t() => boolean()}
   def mcp_overrides(%__MODULE__{custom_entries: entries}) do
     Enum.reduce(entries, %{}, fn

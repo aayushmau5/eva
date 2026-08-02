@@ -95,6 +95,12 @@ defmodule Eva.Agent.Harness do
     GenServer.call(pid, {:update_system_prompt, system_prompt})
   end
 
+  @spec update_hooks(GenServer.server(), Loop.before_tool_callback(), Loop.after_tool_callback()) ::
+          :ok
+  def update_hooks(pid \\ __MODULE__, before_tool_call, after_tool_call) do
+    GenServer.call(pid, {:update_hooks, before_tool_call, after_tool_call})
+  end
+
   @spec change_provider(GenServer.server(), pid()) :: {:ok, map()}
   def change_provider(pid \\ __MODULE__, provider_pid) do
     GenServer.call(pid, {:change_provider, provider_pid})
@@ -286,6 +292,11 @@ defmodule Eva.Agent.Harness do
   def handle_call({:update_tools, tools}, _from, state) do
     state = %{state | tools: tools}
     {:reply, {:ok, state}, state}
+  end
+
+  def handle_call({:update_hooks, before_tool_call, after_tool_call}, _from, state) do
+    state = %{state | before_tool_call: before_tool_call, after_tool_call: after_tool_call}
+    {:reply, :ok, state}
   end
 
   def handle_call({:change_provider, provider_pid}, _from, state) do

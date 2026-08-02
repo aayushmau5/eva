@@ -15,6 +15,9 @@ defmodule Eva.Coding.Session do
   alias Eva.Agent.Tools, as: AgentTools
   alias Eva.Agent.Messages
 
+  alias Eva.Extension.Hooks, as: ExtensionHooks
+  alias Eva.Extension.Set, as: ExtensionSet
+
   alias Eva.Coding.Skills
   alias Eva.Coding.Tools, as: CodingTools
   alias Eva.Coding.SessionIndexManager
@@ -37,6 +40,7 @@ defmodule Eva.Coding.Session do
   ]
 
   @mcp_namespace "mcp"
+  @extension_namespace "extension"
   @mcp_events MCP.Events.modules()
 
   # Config passed during init
@@ -57,6 +61,8 @@ defmodule Eva.Coding.Session do
     field :auto_compact_enabled, boolean(), default: true
     field :defer_index?, boolean(), default: false
     field :listener_pid, pid() | nil, default: nil
+    field :extension_paths, [String.t()], default: []
+    field :extensions_enabled?, boolean(), default: true
   end
 
   # Internal state representation
@@ -78,6 +84,7 @@ defmodule Eva.Coding.Session do
     field :auto_name_attempted, boolean(), default: false
     field :base_tools, [AgentTools.AgentTool.t()], default: []
     field :mcp, MCP.SessionServers.t()
+    field :extensions, ExtensionSet.t()
     # for terminal escape hatch
     field :bash_run,
           %{task: Task.t(), from: GenServer.from(), command: String.t(), private?: boolean()},
@@ -196,6 +203,58 @@ defmodule Eva.Coding.Session do
     GenServer.call(pid, {:set_mcp_enabled, server_name, enabled?, scope})
   end
 
+  @doc """
+  Every loaded extension, with its path, tool count, commands, and whether it is running.
+  """
+  @spec list_extensions(pid()) :: [map()]
+  def list_extensions(pid) do
+    GenServer.call(pid, :list_extensions)
+  end
+
+  @doc """
+  Extension-registered commands, as `%{command_name => {extension_name, command}}`.
+  """
+  @spec extension_commands(pid()) :: %{String.t() => {String.t(), ExtensionSet.Spec.Command.t()}}
+  def extension_commands(pid) do
+    GenServer.call(pid, :extension_commands)
+  end
+
+  @doc """
+  Runs an extension command and returns whatever the extension replied.
+  """
+  @spec run_command(pid(), String.t(), String.t()) :: term()
+  def run_command(pid, name, args \\ "") do
+    GenServer.call(pid, {:run_extension_command, name, args}, 10_000)
+  end
+
+  @doc """
+  Stops every extension, re-reads the extension directories, and rebinds the system
+  prompt and hooks.
+
+  Refused while the agent is running: `Loop` freezes its hook functions at spawn, so a
+  mid-run reload would leave it calling processes that no longer exist.
+  """
+  @spec reload_extensions(pid()) :: {:ok, [String.t()]} | {:error, :agent_running}
+  def reload_extensions(pid) do
+    GenServer.call(pid, :reload_extensions, 30_000)
+  end
+
+  @doc """
+  Turns an extension on or off for this session only.
+
+  The choice is written to the transcript, so it survives a resume and leaves other
+  sessions alone.
+
+  Refused while the agent is running: disabling stops the extension's process, but `Loop`
+  is still holding a hook function pointing at it, and an unreachable extension reads as a
+  block — every remaining tool call in the turn would be denied.
+  """
+  @spec set_extension_enabled(pid(), String.t(), boolean()) ::
+          {:ok, [map()]} | {:error, term()}
+  def set_extension_enabled(pid, name, enabled?) when is_binary(name) and is_boolean(enabled?) do
+    GenServer.call(pid, {:set_extension_enabled, name, enabled?}, 30_000)
+  end
+
   # -- GenServer --
 
   @impl true
@@ -232,19 +291,14 @@ defmodule Eva.Coding.Session do
     mcp =
       MCP.SessionServers.new(session_resources(config), SessionState.mcp_overrides(session_state))
 
-    system_prompt =
-      if is_nil(config.system_prompt) or config.system_prompt != "",
-        do:
-          %Eva.Coding.SystemPrompt.Options{
-            cwd: config.cwd,
-            tools: tools,
-            skills: resources.skills,
-            custom_prompt: config.custom_system_prompt,
-            append_system_prompt: config.append_system_prompt,
-            context_files: resources.context_files
-          }
-          |> Eva.Coding.SystemPrompt.build(),
-        else: config.system_prompt
+    # TODO: there's a chance of optimising this. Since it's sync and extension scripts are compiled and loaded, this
+    # can be slow for a large number of extensions.
+    extensions =
+      load_extensions(config, tools, SessionState.extension_overrides(session_state))
+
+    hook_targets = ExtensionSet.hook_targets(extensions)
+
+    system_prompt = build_system_prompt(config, resources, tools, extensions)
 
     provider_pid = spawn_provider(config: config.provider_config)
 
@@ -256,10 +310,15 @@ defmodule Eva.Coding.Session do
         system_prompt: system_prompt,
         tools: tools,
         messages: session_state.messages,
-        # TODO: think about this
-        before_tool_call: fn _tool_call -> :proceed end,
-        after_tool_call: fn _tool_call, result, error -> {result, error} end
+        before_tool_call: ExtensionHooks.before_tool_call_fun(hook_targets),
+        after_tool_call: ExtensionHooks.after_tool_call_fun(hook_targets)
       )
+
+    # Subscribe the listener to the event bus
+    # TODO: move this out and let listeners subscribe
+    if config.listener_pid do
+      Eva.Bus.subscribe_pid(config.listener_pid, self(), Eva.Bus.classes())
+    end
 
     {:noreply,
      %__MODULE__{
@@ -276,7 +335,8 @@ defmodule Eva.Coding.Session do
          pending_initial_entries: pending_initial_entries,
          config: %SessionConfig{config | system_prompt: system_prompt},
          base_tools: tools,
-         mcp: mcp
+         mcp: mcp,
+         extensions: extensions
      }}
   end
 
@@ -312,29 +372,9 @@ defmodule Eva.Coding.Session do
   end
 
   def handle_call({:prompt, prompt, streaming_behaviour}, _from, %__MODULE__{} = state) do
-    harness_running? = Harness.running?(state.harness_pid)
-    bash_running? = not is_nil(state.bash_run)
-    prompt = expand_prompt_text(state, prompt)
-
-    if harness_running? or bash_running? do
-      case streaming_behaviour do
-        :steer ->
-          :ok = Harness.steer(state.harness_pid, prompt)
-          {:reply, :ok, state}
-
-        :follow_up ->
-          :ok = Harness.follow_up(state.harness_pid, prompt)
-          {:reply, :ok, state}
-
-        _ ->
-          {:reply, {:error, "Harness already running. No streaming_behaviour is set."}, state}
-      end
-    else
-      prompt = %Messages.UserMessage{content: prompt}
-      :ok = refresh_tools(state)
-      {:ok, _harness_state} = Harness.prompt(state.harness_pid, prompt)
-      state = persist_new_messages(state)
-      {:reply, :ok, state}
+    case preprocess_prompt(state, prompt) do
+      {:done, reply} -> {:reply, reply, state}
+      {:continue, prompt} -> dispatch_prompt(state, prompt, streaming_behaviour)
     end
   end
 
@@ -359,6 +399,53 @@ defmodule Eva.Coding.Session do
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(:list_extensions, _from, %__MODULE__{} = state) do
+    {:reply, ExtensionSet.list(state.extensions), state}
+  end
+
+  def handle_call(:extension_commands, _from, %__MODULE__{} = state) do
+    {:reply, ExtensionSet.commands(state.extensions), state}
+  end
+
+  def handle_call({:run_extension_command, name, args}, _from, %__MODULE__{} = state) do
+    {:reply, ExtensionSet.run_command(state.extensions, name, args), state}
+  end
+
+  def handle_call(:reload_extensions, _from, %__MODULE__{} = state) do
+    if Harness.running?(state.harness_pid) do
+      {:reply, {:error, :agent_running}, state}
+    else
+      state = do_reload_extensions(state)
+      {:reply, {:ok, ExtensionSet.diagnostics(state.extensions)}, state}
+    end
+  end
+
+  def handle_call({:set_extension_enabled, name, enabled?}, _from, %__MODULE__{} = state) do
+    opts = extension_opts(state.config, state.base_tools, state.extensions.overrides)
+
+    cond do
+      Harness.running?(state.harness_pid) ->
+        {:reply, {:error, :agent_running}, state}
+
+      true ->
+        case ExtensionSet.set_enabled(state.extensions, name, enabled?, opts) do
+          {:ok, extensions} ->
+            state =
+              %__MODULE__{state | extensions: extensions}
+              |> rebind_extensions()
+              |> append_custom_entry(@extension_namespace, %{
+                "name" => name,
+                "enabled" => enabled?
+              })
+
+            {:reply, {:ok, ExtensionSet.list(extensions)}, state}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
     end
   end
 
@@ -517,6 +604,48 @@ defmodule Eva.Coding.Session do
     {:noreply, state}
   end
 
+  # -- Messages from extensions (see `Eva.Extension.API`) --
+  #
+  # All 3- and 4-tuples, so none of them can be caught by the bash `{ref, result}` clause
+  # further down, which only matches 2-tuples.
+
+  def handle_info({:extension_user_message, _name, text}, %__MODULE__{} = state)
+      when is_binary(text) do
+    if Harness.running?(state.harness_pid) or not is_nil(state.bash_run) do
+      :ok = Harness.follow_up(state.harness_pid, text)
+      {:noreply, state}
+    else
+      {:noreply, submit_prompt(state, text)}
+    end
+  end
+
+  def handle_info(
+        {:extension_custom_message, _name, %Messages.CustomMessage{} = message},
+        %__MODULE__{} = state
+      ) do
+    forward_event(state, %AgentEvents.MessageStart{message: message})
+    forward_event(state, %AgentEvents.MessageEnd{message: message})
+    {:noreply, state}
+  end
+
+  def handle_info({:extension_entry, namespace, data}, %__MODULE__{} = state)
+      when is_binary(namespace) and is_map(data) do
+    {:noreply, append_custom_entry(state, namespace, data)}
+  end
+
+  def handle_info({:extension_notify, level, name, text}, %__MODULE__{} = state)
+      when is_binary(text) do
+    message = %Messages.CustomMessage{
+      custom_type: "extension_notice",
+      content: text,
+      details: %{"extension" => name, "level" => to_string(level)}
+    }
+
+    forward_event(state, %AgentEvents.MessageStart{message: message})
+    forward_event(state, %AgentEvents.MessageEnd{message: message})
+    {:noreply, state}
+  end
+
   def handle_info({:session_name, name}, state) do
     if not is_nil(name) and not is_nil(state.config.session_id) do
       SessionIndexManager.touch_session(
@@ -570,13 +699,27 @@ defmodule Eva.Coding.Session do
   """
   @spec append_mcp_toggle(t(), String.t(), boolean()) :: t()
   def append_mcp_toggle(%__MODULE__{} = state, server_name, enabled) do
+    append_custom_entry(state, @mcp_namespace, %{
+      "server_name" => server_name,
+      "enabled" => enabled
+    })
+  end
+
+  @doc """
+  Appends a namespaced `Custom` entry to the transcript.
+
+  `data` must be JSON-safe with string keys — an entry written here and one replayed
+  from jsonl have to be indistinguishable, and atom keys come back as strings.
+  """
+  @spec append_custom_entry(t(), String.t(), map()) :: t()
+  def append_custom_entry(%__MODULE__{} = state, namespace, data) do
     state = write_pending_initial_entries(state)
 
     entry =
       Entries.Custom.new(%{
         parent_id: state.last_parent_id,
-        namespace: @mcp_namespace,
-        data: %{"server_name" => server_name, "enabled" => enabled}
+        namespace: namespace,
+        data: data
       })
 
     :ok = Storage.append(state.config.storage, entry)
@@ -640,6 +783,86 @@ defmodule Eva.Coding.Session do
     config.resource_paths || %Eva.Coding.Resources{cwd: config.cwd}
   end
 
+  defp build_system_prompt(%SessionConfig{} = config, resources, tools, extensions) do
+    if is_nil(config.system_prompt) or config.system_prompt != "" do
+      %Eva.Coding.SystemPrompt.Options{
+        cwd: config.cwd,
+        tools: tools,
+        skills: resources.skills,
+        custom_prompt: config.custom_system_prompt,
+        append_system_prompt: config.append_system_prompt,
+        context_files: resources.context_files,
+        extra_guidelines: ExtensionSet.guidelines(extensions)
+      }
+      |> Eva.Coding.SystemPrompt.build()
+    else
+      config.system_prompt
+    end
+  end
+
+  # Everything `Set.load/3` and `Set.set_enabled/4` need. Built here rather than stored on
+  # the `Set`, so there is no second copy to go stale.
+  defp extension_opts(%SessionConfig{} = config, tools, overrides) do
+    %{
+      cwd: config.cwd,
+      model: config.model,
+      provider_config: config.provider_config,
+      extra_paths: config.extension_paths,
+      builtin_tool_names: Enum.map(tools, & &1.name),
+      overrides: overrides
+    }
+  end
+
+  defp load_extensions(%SessionConfig{} = config, tools, overrides) do
+    if config.extensions_enabled? do
+      ExtensionSet.load(
+        session_resources(config),
+        self(),
+        extension_opts(config, tools, overrides)
+      )
+    else
+      ExtensionSet.empty()
+    end
+  end
+
+  # Order matters: stop the processes before purging, or `:code.purge/1` kills them
+  # mid-flight. Both `Harness` updates only take effect on the next run, which is why
+  # the caller refuses to reload while the agent is running.
+  defp do_reload_extensions(%__MODULE__{} = state) do
+    :ok = ExtensionSet.shutdown(state.extensions)
+    :ok = state.extensions.loaded |> Map.values() |> Eva.Extension.Loader.purge()
+
+    extensions =
+      load_extensions(state.config, state.base_tools, state.extensions.overrides)
+
+    rebind_extensions(%__MODULE__{state | extensions: extensions})
+  end
+
+  # Re-derives what the harness holds from the current extension set. Tools are absent on
+  # purpose — `refresh_tools/1` already runs at every prompt, so they pick themselves up.
+  # Both of these only take effect on the next run, since `Loop` freezes its context when
+  # it spawns; callers refuse to run while the agent is.
+  defp rebind_extensions(%__MODULE__{} = state) do
+    resources = load_resources(session_resources(state.config), state.config.context_files)
+
+    :ok =
+      Harness.update_system_prompt(
+        state.harness_pid,
+        build_system_prompt(state.config, resources, state.base_tools, state.extensions)
+      )
+
+    hook_targets = ExtensionSet.hook_targets(state.extensions)
+
+    :ok =
+      Harness.update_hooks(
+        state.harness_pid,
+        ExtensionHooks.before_tool_call_fun(hook_targets),
+        ExtensionHooks.after_tool_call_fun(hook_targets)
+      )
+
+    state
+  end
+
   defp load_resources(resource_paths, explicit_context_files) do
     # load skills with diagnostics
     # load prompt templates
@@ -652,6 +875,96 @@ defmodule Eva.Coding.Session do
       context_files: context_files,
       diagnostics: []
     }
+  end
+
+  # A registered `/command` and a `{:handled, _}` input hook both answer the user without
+  # starting a turn. Everything else falls through to the model.
+  #
+  # Extension hooks see the raw text, before skill expansion, so an extension can claim its
+  # own `/` syntax and can emit `/skill:foo` text that then expands normally.
+  defp preprocess_prompt(%__MODULE__{} = state, text) do
+    with :no_match <- run_slash_command(state, text),
+         {:continue, text} <- run_input_hooks(state, text) do
+      {:continue, expand_prompt_text(state, text)}
+    end
+  end
+
+  # An unregistered `/name` is not an error — `/skill:foo` and anything the model should
+  # see must fall through untouched.
+  defp run_slash_command(%__MODULE__{} = state, "/" <> rest) do
+    {name, args} =
+      case String.split(rest, " ", parts: 2) do
+        [name, args] -> {name, String.trim(args)}
+        [name] -> {name, ""}
+      end
+
+    if Map.has_key?(ExtensionSet.commands(state.extensions), name) do
+      state.extensions
+      |> ExtensionSet.run_command(name, args)
+      |> announce(state, "extension_command")
+
+      {:done, :ok}
+    else
+      :no_match
+    end
+  end
+
+  defp run_slash_command(%__MODULE__{}, _text), do: :no_match
+
+  defp run_input_hooks(%__MODULE__{} = state, text) do
+    state.extensions
+    |> ExtensionSet.hook_targets()
+    |> ExtensionHooks.run_input(text)
+    |> case do
+      {:continue, text} ->
+        {:continue, text}
+
+      {:handled, message} ->
+        announce(message, state, "extension_input")
+        {:done, :ok}
+    end
+  end
+
+  # Shown to the user, never persisted — these are not part of the model's conversation.
+  defp announce(result, %__MODULE__{} = state, custom_type) do
+    text = if is_binary(result), do: result, else: inspect(result)
+    message = %Messages.CustomMessage{custom_type: custom_type, content: text}
+
+    forward_event(state, %AgentEvents.MessageStart{message: message})
+    forward_event(state, %AgentEvents.MessageEnd{message: message})
+    :ok
+  end
+
+  defp dispatch_prompt(%__MODULE__{} = state, prompt, streaming_behaviour) do
+    harness_running? = Harness.running?(state.harness_pid)
+    bash_running? = not is_nil(state.bash_run)
+
+    if harness_running? or bash_running? do
+      case streaming_behaviour do
+        :steer ->
+          :ok = Harness.steer(state.harness_pid, prompt)
+          {:reply, :ok, state}
+
+        :follow_up ->
+          :ok = Harness.follow_up(state.harness_pid, prompt)
+          {:reply, :ok, state}
+
+        _ ->
+          {:reply, {:error, "Harness already running. No streaming_behaviour is set."}, state}
+      end
+    else
+      {:reply, :ok, submit_prompt(state, prompt)}
+    end
+  end
+
+  # Starts a turn. Shared with the extension-initiated path in `handle_info/2`.
+  defp submit_prompt(%__MODULE__{} = state, text) do
+    :ok = refresh_tools(state)
+
+    {:ok, _harness_state} =
+      Harness.prompt(state.harness_pid, %Messages.UserMessage{content: text})
+
+    persist_new_messages(state)
   end
 
   # Expand prompt text with markdown resources like skills or prompt templates.
@@ -720,21 +1033,16 @@ defmodule Eva.Coding.Session do
     {:ok, _harness_state} =
       Harness.update_tools(
         state.harness_pid,
-        state.base_tools ++ MCP.SessionServers.tools(state.mcp)
+        state.base_tools ++
+          MCP.SessionServers.tools(state.mcp) ++
+          ExtensionSet.tools(state.extensions)
       )
 
     :ok
   end
 
-  # A session-scoped toggle wins over the config file; with no toggle recorded,
-  # the file decides.
-
-  # Send events to listener_pid
-  # `send` based. To be refactored into PubSub
-  defp forward_event(state, event) do
-    if state.config.listener_pid do
-      send(state.config.listener_pid, event)
-    end
+  defp forward_event(_state, event) do
+    Eva.Bus.publish(self(), event)
   end
 
   defp write_pending_initial_entries(%__MODULE__{} = state) do

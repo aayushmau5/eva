@@ -22,6 +22,19 @@ defmodule RunBashHarness do
   def handle_call({:steer, _prompt}, _from, state), do: {:reply, :ok, state}
 
   def handle_call({:follow_up, _prompt}, _from, state), do: {:reply, :ok, state}
+
+  def handle_call({:update_tools, _tools}, _from, state),
+    do: {:reply, {:ok, state}, state}
+
+  def handle_call({:update_system_prompt, _prompt}, _from, state),
+    do: {:reply, :ok, state}
+
+  def handle_call({:update_hooks, _before, _after}, _from, state), do: {:reply, :ok, state}
+
+  def handle_call({:prompt, _prompt}, _from, state),
+    do: {:reply, {:ok, state}, state}
+
+  def handle_call(:get_state, _from, state), do: {:reply, state, state}
 end
 
 defmodule Eva.Coding.SessionTest do
@@ -941,6 +954,154 @@ defmodule Eva.Coding.SessionTest do
     end
   end
 
+  describe "extension_user_message" do
+    test "follow_up when harness is running" do
+      {:ok, harness} = RunBashHarness.start_link(true)
+      state = build_state(harness_pid: harness)
+
+      {:noreply, _} =
+        Session.handle_info({:extension_user_message, "ext1", "a message"}, state)
+    end
+
+    test "submit_prompt when harness is not running" do
+      {:ok, harness} = RunBashHarness.start_link(false)
+      config = build_session_config()
+      state = build_state(config: config, harness_pid: harness)
+
+      {:noreply, _} =
+        Session.handle_info({:extension_user_message, "ext1", "a message"}, state)
+    end
+  end
+
+  describe "extension_custom_message" do
+    test "forwards MessageStart and MessageEnd events to listener" do
+      listener_pid = self()
+      config = build_session_config(listener_pid: listener_pid)
+      state = build_state(config: config)
+
+      custom = %Messages.CustomMessage{
+        custom_type: "test_type",
+        content: "test content"
+      }
+
+      {:noreply, _} =
+        Session.handle_info({:extension_custom_message, "ext1", custom}, state)
+
+      assert_receive %AgentEvents.MessageStart{message: ^custom}
+      assert_receive %AgentEvents.MessageEnd{message: ^custom}
+    end
+  end
+
+  describe "extension_entry" do
+    test "appends custom entry to storage" do
+      config = build_session_config()
+      state = build_state(config: config)
+
+      {:noreply, _} =
+        Session.handle_info({:extension_entry, "my_ext", %{key: "val"}}, state)
+
+      entries = Storage.read_all(config.storage)
+
+      custom = Enum.find(entries, &(&1.type == "custom" and &1.namespace == "my_ext"))
+      refute is_nil(custom)
+      assert custom.data == %{"key" => "val"}
+    end
+  end
+
+  describe "extension_notify" do
+    test "forwards notification as custom message events" do
+      listener_pid = self()
+      config = build_session_config(listener_pid: listener_pid)
+      state = build_state(config: config)
+
+      {:noreply, _} =
+        Session.handle_info({:extension_notify, :warning, "ext1", "be careful"}, state)
+
+      assert_receive %AgentEvents.MessageStart{
+        message: %Messages.CustomMessage{custom_type: "extension_notice", content: "be careful"}
+      }
+
+      assert_receive %AgentEvents.MessageEnd{
+        message: %Messages.CustomMessage{custom_type: "extension_notice"}
+      }
+    end
+
+    test "includes extension name and level in details" do
+      listener_pid = self()
+      config = build_session_config(listener_pid: listener_pid)
+      state = build_state(config: config)
+
+      {:noreply, _} =
+        Session.handle_info({:extension_notify, :error, "alert_ext", "fatal"}, state)
+
+      assert_receive %AgentEvents.MessageStart{
+        message: %Messages.CustomMessage{} = msg
+      }
+
+      assert msg.details == %{"extension" => "alert_ext", "level" => "error"}
+    end
+  end
+
+  describe "extension toggles" do
+    alias Eva.Agent.Session.Storage
+
+    test "writes an extension toggle entry that replays as an override" do
+      {:ok, harness} = RunBashHarness.start_link(false)
+      config = build_session_config()
+      state = build_state(config: config, harness_pid: harness)
+
+      {:reply, {:ok, _list}, _new_state} =
+        Session.handle_call({:set_extension_enabled, "ext1", false}, nil, state)
+
+      entries = Storage.read_all(config.storage)
+
+      custom =
+        Enum.find(entries, &(&1.type == "custom" and &1.namespace == "extension"))
+
+      refute is_nil(custom)
+      assert custom.data["name"] == "ext1"
+      assert custom.data["enabled"] == false
+    end
+
+    test "refused when agent is running" do
+      {:ok, harness} = RunBashHarness.start_link(true)
+      state = build_state(harness_pid: harness)
+
+      {:reply, {:error, :agent_running}, _} =
+        Session.handle_call({:set_extension_enabled, "ext1", false}, nil, state)
+    end
+
+    test "list_extensions returns list of extension maps" do
+      config = build_session_config()
+      state = build_state(config: config)
+      {:reply, list, _} = Session.handle_call(:list_extensions, nil, state)
+      assert is_list(list)
+    end
+
+    test "extension_commands returns command map" do
+      config = build_session_config()
+      state = build_state(config: config)
+      {:reply, commands, _} = Session.handle_call(:extension_commands, nil, state)
+      assert is_map(commands)
+    end
+
+    test "run_command dispatches to extension set" do
+      config = build_session_config()
+      state = build_state(config: config)
+
+      {:reply, {:error, :unknown_command}, _} =
+        Session.handle_call({:run_extension_command, "nonexistent", ""}, nil, state)
+    end
+
+    test "reload_extensions refused when agent is running" do
+      {:ok, harness} = RunBashHarness.start_link(true)
+      state = build_state(harness_pid: harness)
+
+      {:reply, {:error, :agent_running}, _} =
+        Session.handle_call(:reload_extensions, nil, state)
+    end
+  end
+
   describe "handle_call :prompt with bash running" do
     test "returns :ok with {:error, :agent_running} status when bash is running" do
       {:ok, harness} = RunBashHarness.start_link()
@@ -987,7 +1148,14 @@ defmodule Eva.Coding.SessionTest do
   end
 
   defp build_state(attrs) do
-    config = build_session_config()
+    config = Keyword.get(attrs, :config, build_session_config())
+
+    # `handle_continue(:setup)` subscribes the listener to the bus. These tests call the
+    # handlers directly and skip setup, so they have to do it themselves — `forward_event/2`
+    # publishes to `{:eva_session, self(), class}` and nobody would be listening otherwise.
+    if config.listener_pid do
+      Eva.Bus.subscribe_pid(config.listener_pid, self(), Eva.Bus.classes())
+    end
 
     struct(
       Session,
@@ -1004,6 +1172,7 @@ defmodule Eva.Coding.SessionTest do
           command_registry: [],
           pending_initial_entries: [],
           mcp: %Eva.MCP.SessionServers{},
+          extensions: %Eva.Extension.Set{},
           config: config,
           provider_config: config.provider_config
         ],

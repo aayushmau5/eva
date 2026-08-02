@@ -34,7 +34,8 @@ defmodule Eva.Agent.Loop do
   execution and return an error result.
   """
   @type before_tool_callback ::
-          (Messages.ToolCall.t() -> :proceed | {:block, String.t()})
+          (Messages.ToolCall.t() ->
+             :proceed | {:proceed, Messages.ToolCall.t()} | {:block, String.t()})
 
   @typedoc """
   Called after each tool execution (including errors and blocks). Receives the
@@ -304,6 +305,16 @@ defmodule Eva.Agent.Loop do
             execute_tool(tool, tool_call, ctx)
           end
 
+        # Hooks can rewrite tool_call parameters
+        {:proceed, %Messages.ToolCall{} = rewritten} ->
+          tool = Map.get(tool_by_name, rewritten.name)
+
+          if is_nil(tool) do
+            {unknown_tool_result(rewritten), true}
+          else
+            execute_tool(tool, rewritten, ctx)
+          end
+
         {:block, reason} ->
           {blocked_result(tool_call, reason), true}
       end
@@ -346,14 +357,29 @@ defmodule Eva.Agent.Loop do
   # ── Hooks ──────────────────────────────────────────────────────────────
 
   defp apply_before_hook(tool_call, %{before_tool_callback: hook})
-       when is_function(hook, 1),
-       do: hook.(tool_call)
+       when is_function(hook, 1) do
+    hook.(tool_call)
+  rescue
+    e -> {:block, "Extension hook failed: #{Exception.message(e)}"}
+  catch
+    # This clause matters because the hooks will be doing `GenServer.call` into extension
+    # processes, and a timeout or dead process exits rather than raising.
+    :exit, reason -> {:block, "Extension hook unavailable: #{inspect(reason)}"}
+  end
 
   defp apply_before_hook(_tool_call, _ctx), do: :proceed
 
   defp apply_after_hook(tool_call, result, is_error, %{after_tool_callback: hook})
-       when is_function(hook, 3),
-       do: hook.(tool_call, result, is_error)
+       when is_function(hook, 3) do
+    hook.(tool_call, result, is_error)
+  rescue
+    # TODO: bubble up the errors as diagnostics
+    _e -> {result, is_error}
+  catch
+    # This clause matters because the hooks will be doing `GenServer.call` into extension
+    # processes, and a timeout or dead process exits rather than raising.
+    :exit, _reason -> {result, is_error}
+  end
 
   defp apply_after_hook(_tool_call, result, is_error, _ctx), do: {result, is_error}
 
