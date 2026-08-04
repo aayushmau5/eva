@@ -998,13 +998,37 @@ defmodule Eva.Coding.SessionTest do
       state = build_state(config: config)
 
       {:noreply, _} =
-        Session.handle_info({:extension_entry, "my_ext", %{key: "val"}}, state)
+        Session.handle_info({:extension_entry, "my_ext", %{"key" => "val"}}, state)
 
       entries = Storage.read_all(config.storage)
 
-      custom = Enum.find(entries, &(&1.type == "custom" and &1.namespace == "my_ext"))
+      # Namespaced `ext:<name>` so an extension called `mcp` cannot read or write
+      # core's own `mcp` entries.
+      custom = Enum.find(entries, &(&1.type == "custom" and &1.namespace == "ext:my_ext"))
       refute is_nil(custom)
       assert custom.data == %{"key" => "val"}
+    end
+
+    test "an extension only sees its own entries on replay" do
+      config = build_session_config()
+      state = build_state(config: config, session_state: SessionState.from_entries([]))
+
+      {:noreply, state} = Session.handle_info({:extension_entry, "a", %{"n" => 1}}, state)
+      {:noreply, state} = Session.handle_info({:extension_entry, "b", %{"n" => 2}}, state)
+      {:noreply, state} = Session.handle_info({:extension_entry, "a", %{"n" => 3}}, state)
+
+      grouped = SessionState.entries_by_extension(state.session_state)
+
+      assert %{"a" => [%{"n" => 1}, %{"n" => 3}], "b" => [%{"n" => 2}]} = grouped
+    end
+
+    test "core's own namespaces are not visible to an extension of the same name" do
+      config = build_session_config()
+      state = build_state(config: config, session_state: SessionState.from_entries([]))
+
+      state = Session.append_mcp_toggle(state, "github", false)
+
+      refute Map.has_key?(SessionState.entries_by_extension(state.session_state), "mcp")
     end
   end
 

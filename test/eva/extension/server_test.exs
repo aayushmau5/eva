@@ -176,8 +176,8 @@ defmodule Eva.Extension.ServerTest do
             provider_name: "test"
           },
       session_pid: Keyword.get(attrs, :session_pid, self()),
-      resources: Keyword.get(attrs, :resources) || %Eva.Coding.Resources{root: "/tmp/eva"},
-      extension_dir: Keyword.get(attrs, :extension_dir, "/tmp/ext")
+      extension_dir: Keyword.get(attrs, :extension_dir, "/tmp/ext"),
+      entries: Keyword.get(attrs, :entries, [])
     }
   end
 

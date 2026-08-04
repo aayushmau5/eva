@@ -28,11 +28,18 @@ defmodule Eva.Extension do
     field :name, String.t()
     field :cwd, String.t()
     field :model, String.t()
-    # Passing provider_config so a subagent extension can spawn its own provider
-    field :provider_config, Eva.AI.Config.OpenAICompatible.t()
+    # Passing provider_config so a subagent extension can spawn its own provider.
+    # Opaque on purpose: an extension hands it straight back to the host rather than
+    # reading it, so the type does not have to survive the move to `eva_core`.
+    field :provider_config, term()
     field :session_pid, pid()
-    field :resources, Eva.Coding.Resources.t()
     field :extension_dir, String.t()
+    # This extension's own entries, oldest first, replayed from the transcript.
+    field :entries, [map()], default: []
+    # The host half of the capability API. `Eva.Extension.UI` and friends dispatch
+    # through this rather than naming a host module, so the same extension works
+    # unchanged when it runs somewhere other than Eva's own VM.
+    field :capabilities, module()
   end
 
   @callback setup(Context.t()) :: {:ok, Eva.Extension.Spec.t()} | {:error, term()}

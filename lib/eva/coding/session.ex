@@ -41,6 +41,10 @@ defmodule Eva.Coding.Session do
 
   @mcp_namespace "mcp"
   @extension_namespace "extension"
+
+  # Entries an extension writes are namespaced by its own name under this prefix.
+  # Kept in sync with `Eva.Agent.Session.State`.
+  @extension_entry_prefix "ext:"
   @mcp_events MCP.Events.modules()
 
   # Config passed during init
@@ -211,10 +215,15 @@ defmodule Eva.Coding.Session do
     GenServer.call(pid, :list_extensions)
   end
 
+  @spec extension_diagnostics(pid()) :: [String.t()]
+  def extension_diagnostics(pid) do
+    GenServer.call(pid, :extension_diagnostics)
+  end
+
   @doc """
   Extension-registered commands, as `%{command_name => {extension_name, command}}`.
   """
-  @spec extension_commands(pid()) :: %{String.t() => {String.t(), ExtensionSet.Spec.Command.t()}}
+  @spec extension_commands(pid()) :: %{String.t() => {String.t(), Eva.Extension.Spec.Command.t()}}
   def extension_commands(pid) do
     GenServer.call(pid, :extension_commands)
   end
@@ -294,7 +303,12 @@ defmodule Eva.Coding.Session do
     # TODO: there's a chance of optimising this. Since it's sync and extension scripts are compiled and loaded, this
     # can be slow for a large number of extensions.
     extensions =
-      load_extensions(config, tools, SessionState.extension_overrides(session_state))
+      load_extensions(
+        config,
+        tools,
+        SessionState.extension_overrides(session_state),
+        session_state
+      )
 
     hook_targets = ExtensionSet.hook_targets(extensions)
 
@@ -406,6 +420,10 @@ defmodule Eva.Coding.Session do
     {:reply, ExtensionSet.list(state.extensions), state}
   end
 
+  def handle_call(:extension_diagnostics, _from, %__MODULE__{} = state) do
+    {:reply, ExtensionSet.diagnostics(state.extensions), state}
+  end
+
   def handle_call(:extension_commands, _from, %__MODULE__{} = state) do
     {:reply, ExtensionSet.commands(state.extensions), state}
   end
@@ -424,7 +442,13 @@ defmodule Eva.Coding.Session do
   end
 
   def handle_call({:set_extension_enabled, name, enabled?}, _from, %__MODULE__{} = state) do
-    opts = extension_opts(state.config, state.base_tools, state.extensions.overrides)
+    opts =
+      extension_opts(
+        state.config,
+        state.base_tools,
+        state.extensions.overrides,
+        state.session_state
+      )
 
     cond do
       Harness.running?(state.harness_pid) ->
@@ -628,9 +652,11 @@ defmodule Eva.Coding.Session do
     {:noreply, state}
   end
 
-  def handle_info({:extension_entry, namespace, data}, %__MODULE__{} = state)
-      when is_binary(namespace) and is_map(data) do
-    {:noreply, append_custom_entry(state, namespace, data)}
+  # `name` is the extension's, not a namespace — the namespace is derived from it so
+  # extensions cannot write into core's.
+  def handle_info({:extension_entry, name, data}, %__MODULE__{} = state)
+      when is_binary(name) and is_map(data) do
+    {:noreply, append_custom_entry(state, @extension_entry_prefix <> name, data)}
   end
 
   def handle_info({:extension_notify, level, name, text}, %__MODULE__{} = state)
@@ -644,6 +670,13 @@ defmodule Eva.Coding.Session do
     forward_event(state, %AgentEvents.MessageStart{message: message})
     forward_event(state, %AgentEvents.MessageEnd{message: message})
     {:noreply, state}
+  end
+
+  # `refresh_tools/1` re-reads the set at every prompt.
+  def handle_info({:extension_update_tools, name, tools}, %__MODULE__{} = state)
+      when is_list(tools) do
+    {:noreply,
+     %__MODULE__{state | extensions: ExtensionSet.put_tools(state.extensions, name, tools)}}
   end
 
   def handle_info({:session_name, name}, state) do
@@ -726,10 +759,23 @@ defmodule Eva.Coding.Session do
     leaf = Entries.Leaf.new(%{parent_id: entry.id, entry_id: entry.id})
     :ok = Storage.append(state.config.storage, leaf)
 
-    %__MODULE__{state | last_parent_id: entry.id}
+    %__MODULE__{
+      state
+      | last_parent_id: entry.id,
+        session_state: record_custom_entry(state.session_state, entry)
+    }
   end
 
   # -- Private --
+
+  # `session_state` is the replayed view of the transcript and is only built once, at
+  # init. Without this an entry written now would be invisible to anything rebuilt
+  # later in the same session — a reloaded extension reading `Context.entries`.
+  defp record_custom_entry(nil, _entry), do: nil
+
+  defp record_custom_entry(%SessionState{} = session_state, %Entries.Custom{} = entry) do
+    %SessionState{session_state | custom_entries: session_state.custom_entries ++ [entry]}
+  end
 
   @spec make_initial_entries(config :: SessionConfig.t()) :: [Entries.t()]
   defp make_initial_entries(%SessionConfig{} = config) do
@@ -802,23 +848,33 @@ defmodule Eva.Coding.Session do
 
   # Everything `Set.load/3` and `Set.set_enabled/4` need. Built here rather than stored on
   # the `Set`, so there is no second copy to go stale.
-  defp extension_opts(%SessionConfig{} = config, tools, overrides) do
+  defp extension_opts(%SessionConfig{} = config, tools, overrides, session_state) do
     %{
       cwd: config.cwd,
       model: config.model,
       provider_config: config.provider_config,
       extra_paths: config.extension_paths,
       builtin_tool_names: Enum.map(tools, & &1.name),
-      overrides: overrides
+      overrides: overrides,
+      # Grouped here rather than in the `Set`, which has no business knowing what a
+      # `Custom` entry is.
+      extension_entries: extension_entries(session_state),
+      capabilities: Eva.Extension.Capabilities
     }
   end
 
-  defp load_extensions(%SessionConfig{} = config, tools, overrides) do
+  # A session with nothing replayed yet has no entries to hand out.
+  defp extension_entries(%SessionState{} = session_state),
+    do: SessionState.entries_by_extension(session_state)
+
+  defp extension_entries(nil), do: %{}
+
+  defp load_extensions(%SessionConfig{} = config, tools, overrides, session_state) do
     if config.extensions_enabled? do
       ExtensionSet.load(
         session_resources(config),
         self(),
-        extension_opts(config, tools, overrides)
+        extension_opts(config, tools, overrides, session_state)
       )
     else
       ExtensionSet.empty()
@@ -833,7 +889,12 @@ defmodule Eva.Coding.Session do
     :ok = state.extensions.loaded |> Map.values() |> Eva.Extension.Loader.purge()
 
     extensions =
-      load_extensions(state.config, state.base_tools, state.extensions.overrides)
+      load_extensions(
+        state.config,
+        state.base_tools,
+        state.extensions.overrides,
+        state.session_state
+      )
 
     rebind_extensions(%__MODULE__{state | extensions: extensions})
   end

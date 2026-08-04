@@ -12,11 +12,13 @@ defmodule Eva.Extension.API do
       {:extension_custom_message, name, %Messages.CustomMessage{}}
       {:extension_entry, namespace, data}
       {:extension_notify, level, name, text}
+      {:extension_update_tools, name, tools}
   """
 
   require Logger
 
   alias Eva.Agent.Messages
+  alias Eva.Agent.Tools
   alias Eva.Extension.Context
   alias Eva.Extension.Processes
 
@@ -49,8 +51,31 @@ defmodule Eva.Extension.API do
     :ok
   end
 
+  @doc """
+  Replaces the tools this extension contributes.
+
+  For tools an extension only learns about after `setup/1` — an MCP server that has
+  finished its handshake, say. Replaces rather than appends, so a tool that goes away
+  can be removed and calling twice with the same list is a no-op.
+
+  Takes effect at the *next* prompt, not immediately: `Harness.update_tools/2` is inert
+  mid-run, so a call made while the agent is working lands on the user's next message.
+  """
+  @spec update_tools(Context.t(), [Tools.AgentTool.t()]) :: :ok
+  def update_tools(%Context{session_pid: session_pid, name: name}, tools) when is_list(tools) do
+    send(session_pid, {:extension_update_tools, name, tools})
+    :ok
+  end
+
+  @doc """
+  Persists a map for this extension. Comes back in `Context.entries` next session.
+
+  Keys **must be strings**. The data round-trips through JSON, so atom keys come back
+  as strings and stop matching whatever you wrote.
+  """
   @spec append_entry(Context.t(), map()) :: :ok
   def append_entry(%Context{session_pid: session_pid, name: name}, data) when is_map(data) do
+    warn_on_atom_keys(name, data)
     send(session_pid, {:extension_entry, name, data})
     :ok
   end
@@ -60,6 +85,17 @@ defmodule Eva.Extension.API do
       when is_binary(text) and level in [:info, :warning, :error] do
     send(session_pid, {:extension_notify, level, name, text})
     :ok
+  end
+
+  # Warn rather than raise: `append_entry/2` is fire-and-forget, and the entry is still
+  # written — it just will not match on resume. Failing the call would be worse.
+  defp warn_on_atom_keys(name, data) do
+    if Enum.any?(Map.keys(data), &(not is_binary(&1))) do
+      Logger.warning(
+        "extension #{name}: append_entry/2 keys must be strings; " <>
+          "atom keys become strings on resume and will not match what you wrote"
+      )
+    end
   end
 
   @spec whereis(Context.t() | pid(), String.t()) :: pid() | nil

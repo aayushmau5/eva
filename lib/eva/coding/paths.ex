@@ -92,7 +92,7 @@ defmodule Eva.Coding.Paths do
     |> Enum.reverse()
     |> Enum.reduce_while({[], 0}, fn part, {acc, len} ->
       next = len + byte_size(part) + if acc == [], do: 0, else: 1
-      if next > max_length, do: {:halt, acc}, else: {:cont, {[part | acc], next}}
+      if next > max_length, do: {:halt, {acc, len}}, else: {:cont, {[part | acc], next}}
     end)
     |> elem(0)
   end

@@ -8,6 +8,10 @@ defmodule Eva.Agent.Session.State do
   alias Eva.Agent.Messages
   alias Eva.Agent.Session.{Entries, Tree}
 
+  # Extension-written entries are namespaced `ext:<name>` so they cannot collide with
+  # other custom entries.
+  @extension_entry_prefix "ext:"
+
   typedstruct do
     field :messages, [Messages.agent_message()]
     field :model, String.t()
@@ -25,6 +29,13 @@ defmodule Eva.Agent.Session.State do
   def from_entries(entries, leaf_id \\ nil) do
     replay_entries = if leaf_id, do: Tree.path_to_entry(entries, leaf_id), else: entries
 
+    # Custom entries are state, not conversation — MCP toggles, extension
+    # enable/disable, and whatever extensions persist. Collect them from the whole
+    # path, because the branch-summary truncation below exists to trim what the
+    # model re-reads and would otherwise silently discard settings made before the
+    # branch.
+    custom_entries = for %Entries.Custom{} = entry <- replay_entries, do: entry
+
     replay_entries =
       case get_latest_branch_summary_index(replay_entries) do
         nil -> replay_entries
@@ -38,7 +49,6 @@ defmodule Eva.Agent.Session.State do
       label: nil,
       active_leaf_id: nil,
       session_info: nil,
-      custom_entries: [],
       compaction_entries: []
     }
 
@@ -63,8 +73,9 @@ defmodule Eva.Agent.Session.State do
           "session_info" ->
             %{state | session_info: entry}
 
+          # Already collected above, from the full path rather than the truncated one.
           "custom" ->
-            %{state | custom_entries: [entry | state.custom_entries]}
+            state
 
           "compaction" ->
             %{
@@ -88,7 +99,7 @@ defmodule Eva.Agent.Session.State do
       label: state.label,
       active_leaf_id: state.active_leaf_id,
       session_info: state.session_info,
-      custom_entries: Enum.reverse(state.custom_entries),
+      custom_entries: custom_entries,
       compaction_entries: Enum.reverse(state.compaction_entries),
       context_entry_ids: Enum.map(message_rows, fn {id, _msg} -> id end),
       entries: replay_entries
@@ -122,6 +133,27 @@ defmodule Eva.Agent.Session.State do
       _entry, acc ->
         acc
     end)
+  end
+
+  @doc """
+  Every extension's own entries, grouped by extension name, oldest first.
+
+  Written by `Eva.Extension.API.append_entry/2` and handed back through
+  `Eva.Extension.Context` so an extension can rebuild its state on resume. The
+  `ext:` prefix keeps these apart from the `mcp` and `extension` namespaces core
+  writes, so an extension *named* `mcp` cannot read core's server toggles.
+  """
+  @spec entries_by_extension(t()) :: %{String.t() => [map()]}
+  def entries_by_extension(%__MODULE__{custom_entries: entries}) do
+    entries
+    |> Enum.reduce(%{}, fn
+      %Entries.Custom{namespace: @extension_entry_prefix <> name, data: data}, acc ->
+        Map.update(acc, name, [data], &[data | &1])
+
+      _entry, acc ->
+        acc
+    end)
+    |> Map.new(fn {name, data} -> {name, Enum.reverse(data)} end)
   end
 
   @spec mcp_overrides(t()) :: %{String.t() => boolean()}

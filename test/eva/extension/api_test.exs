@@ -11,8 +11,8 @@ defmodule Eva.Extension.ApiTest do
       model: Keyword.get(attrs, :model, "gpt-4"),
       provider_config: Keyword.get(attrs, :provider_config) || build_config(),
       session_pid: Keyword.get(attrs, :session_pid, self()),
-      resources: Keyword.get(attrs, :resources) || build_resources(),
-      extension_dir: Keyword.get(attrs, :extension_dir, "/tmp/ext")
+      extension_dir: Keyword.get(attrs, :extension_dir, "/tmp/ext"),
+      entries: Keyword.get(attrs, :entries, [])
     }
   end
 
@@ -21,10 +21,6 @@ defmodule Eva.Extension.ApiTest do
       base_url: "http://localhost:1/v1",
       provider_name: "test"
     }
-  end
-
-  defp build_resources do
-    %Eva.Coding.Resources{root: "/tmp/eva"}
   end
 
   describe "send_user_message/2" do

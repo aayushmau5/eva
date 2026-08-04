@@ -84,6 +84,20 @@ defmodule Eva.Extension.Set do
     Enum.reverse(kept)
   end
 
+  @doc """
+  Replaces one extension's tools.
+  """
+  @spec put_tools(t(), String.t(), [Tools.AgentTool.t()]) :: t()
+  def put_tools(%__MODULE__{} = set, name, tools) do
+    case Map.fetch(set.specs, name) do
+      {:ok, %Spec{} = spec} ->
+        %__MODULE__{set | specs: Map.put(set.specs, name, %Spec{spec | tools: tools})}
+
+      :error ->
+        set
+    end
+  end
+
   @spec guidelines(t()) :: [String.t()]
   def guidelines(%__MODULE__{} = set) do
     Enum.flat_map(set.order, &spec!(set, &1).guidelines)
@@ -214,7 +228,7 @@ defmodule Eva.Extension.Set do
   end
 
   defp add_extension(%__MODULE__{} = set, %Loaded{} = ext, session_pid, opts) do
-    context = build_context(ext, session_pid, set.resources, opts)
+    context = build_context(ext, session_pid, opts)
 
     with {:ok, spec} <- call_setup(ext, context),
          :ok <- maybe_start(ext, spec, context) do
@@ -224,15 +238,17 @@ defmodule Eva.Extension.Set do
     end
   end
 
-  defp build_context(%Loaded{} = ext, session_pid, resources, opts) do
+  defp build_context(%Loaded{} = ext, session_pid, opts) do
     %Context{
       name: ext.name,
       cwd: Map.get(opts, :cwd),
       model: Map.get(opts, :model),
       provider_config: Map.get(opts, :provider_config),
       session_pid: session_pid,
-      resources: resources,
-      extension_dir: Path.dirname(ext.path)
+      extension_dir: Path.dirname(ext.path),
+      # Only this extension's own entries.
+      entries: opts |> Map.get(:extension_entries, %{}) |> Map.get(ext.name, []),
+      capabilities: Map.get(opts, :capabilities)
     }
   end
 
