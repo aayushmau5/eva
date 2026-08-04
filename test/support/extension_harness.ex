@@ -7,7 +7,7 @@ defmodule Eva.Test.ExtensionHarness do
   provider, or model.
   """
 
-  alias Eva.Extension.{Context, Server, Spec}
+  alias Eva.Extension.{Context, Spec, Supervisor}
 
   defstruct [:module, :pid, :session, :context, :spec]
 
@@ -27,16 +27,21 @@ defmodule Eva.Test.ExtensionHarness do
       session_pid: session,
       extension_dir: Keyword.get(opts, :extension_dir, "/tmp"),
       entries: Keyword.get(opts, :entries, []),
-      capabilities: Keyword.get(opts, :capabilities, __MODULE__.StupCapabilities)
+      capabilities: Keyword.get(opts, :capabilities, __MODULE__.StubCapabilities)
     }
 
     {:ok, %Spec{} = spec} = module.setup(context)
 
+    # Through the supervisor rather than `Server.start_link/1`: a graceful stop exits
+    # with `{:shutdown, reason}`, which is not `:normal` and so propagates across a
+    # link — starting it here directly would kill the test process on `stop/2`. Going
+    # through the supervisor also exercises the path a real session uses.
+    #
+    # Cleanup still happens: the fake session is linked to the test, so when the test
+    # ends the session dies, the server sees `:DOWN`, and stops itself.
     pid =
       if Spec.stateful?(spec) do
-        {:ok, pid} =
-          Server.start_link(module: module, context: context, event_classes: spec.event_classes)
-
+        {:ok, pid} = Supervisor.start_extension(module, spec, context)
         pid
       end
 
@@ -71,11 +76,9 @@ defmodule Eva.Test.ExtensionHarness do
   def entries(%__MODULE__{} = h), do: for({:extension_entry, _n, data} <- sent(h), do: data)
   def pushed_tools(%__MODULE__{} = h), do: for({:extension_update_tools, _n, t} <- sent(h), do: t)
 
+  def stop(harness, reason \\ :shutdown)
   def stop(%__MODULE__{pid: nil}, _reason), do: :ok
-
-  def stop(%__MODULE__{pid: pid}, reason) do
-    Eva.Extension.Supervisor.stop_extension(pid, reason)
-  end
+  def stop(%__MODULE__{pid: pid}, reason), do: Supervisor.stop_extension(pid, reason)
 
   # -- Private --
 
@@ -92,7 +95,7 @@ defmodule Eva.Test.ExtensionHarness do
     end
   end
 
-  defmodule StupCapabilities do
+  defmodule StubCapabilities do
     @moduledoc "Returns defaults so dialogs never hang a test."
     def ask(_question, default, _opts), do: default
   end

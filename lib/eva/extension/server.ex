@@ -20,6 +20,8 @@ defmodule Eva.Extension.Server do
 
     # Monitor Session process so we get notified if it goes down
     Process.monitor(context.session_pid)
+    # Runs `terminate/2` so we can clean up stuff
+    Process.flag(:trap_exit, true)
 
     :ok = Eva.Bus.subscribe(context.session_pid, event_classes)
 
@@ -76,6 +78,13 @@ defmodule Eva.Extension.Server do
     end
   end
 
+  def handle_call({:stop, reason}, _from, state) do
+    # {:stop, exit_reason, reply, state} tells GenServer:
+    # send reply, call terminate/2 with exit_reason, then exit.
+    # A {:shutdown, _} reason is an orderly stop, not a crash.
+    {:stop, {:shutdown, reason}, :ok, state}
+  end
+
   @impl true
   def handle_cast({:extension_cast, request}, state) do
     case safe_apply(state, :handle_request, [request, state.extension_state]) do
@@ -99,6 +108,18 @@ defmodule Eva.Extension.Server do
 
   def handle_info(_event, state), do: {:noreply, state}
 
+  @impl true
+  def terminate(reason, state) do
+    # `terminate/2` is optional, and `use Eva.Extension` is what injects the default —
+    # so a module that implements the behaviour by hand may genuinely not have one.
+    # Calling it regardless would log a failure for an extension that did nothing wrong.
+    if function_exported?(state.module, :terminate, 2) do
+      safe_apply(state, :terminate, [extension_reason(reason), state.extension_state])
+    end
+
+    :ok
+  end
+
   # -- Private --
 
   defp safe_apply(state, fun, args) do
@@ -118,6 +139,9 @@ defmodule Eva.Extension.Server do
   defp hook_failure(:tool_result, {_call, result, is_error}, _reason), do: {result, is_error}
   defp hook_failure(:input, _payload, _reason), do: :continue
   defp hook_failure(_, _payload, _reason), do: :continue
+
+  defp extension_reason({:shutdown, reason}) when reason in [:reload, :disabled], do: reason
+  defp extension_reason(_reason), do: :shutdown
 
   defp via(session_pid, name) do
     {:via, Registry, {Eva.Extension.Processes, {session_pid, name}}}

@@ -64,7 +64,7 @@ defmodule Eva.Extension.Set do
   """
   @spec set_enabled(t(), String.t(), boolean(), map()) :: {:ok, t()} | {:error, term()}
   def set_enabled(%__MODULE__{} = set, name, false, _opts) do
-    %__MODULE__{} = dropped = drop(set, name)
+    %__MODULE__{} = dropped = drop(set, name, :disabled)
     {:ok, %__MODULE__{dropped | overrides: Map.put(set.overrides, name, false)}}
   end
 
@@ -158,9 +158,11 @@ defmodule Eva.Extension.Set do
   Stopping an already-dead process is a no-op, so this is safe to call from the
   session's `:DOWN` handler as well as from an explicit disable.
   """
-  @spec drop(t(), String.t() | pid()) :: t()
-  def drop(%__MODULE__{} = set, name) when is_binary(name) do
-    stop_server(set, name)
+  @spec drop(t(), String.t() | pid(), Eva.Extension.terminate_reason()) :: t()
+  def drop(set, name, reason \\ :shutdown)
+
+  def drop(%__MODULE__{} = set, name, reason) when is_binary(name) do
+    stop_server(set, name, reason)
 
     %__MODULE__{
       set
@@ -170,16 +172,16 @@ defmodule Eva.Extension.Set do
     }
   end
 
-  def drop(%__MODULE__{} = set, pid) when is_pid(pid) do
+  def drop(%__MODULE__{} = set, pid, reason) when is_pid(pid) do
     case Registry.keys(Processes, pid) do
-      [{_session_pid, name} | _] -> drop(set, name)
+      [{_session_pid, name} | _] -> drop(set, name, reason)
       [] -> set
     end
   end
 
-  @spec shutdown(t()) :: :ok
-  def shutdown(%__MODULE__{} = set) do
-    Enum.each(set.order, &stop_server(set, &1))
+  @spec shutdown(t(), Eva.Extension.terminate_reason()) :: :ok
+  def shutdown(%__MODULE__{} = set, reason \\ :shutdown) do
+    Enum.each(set.order, &stop_server(set, &1, reason))
     :ok
   end
 
@@ -336,10 +338,10 @@ defmodule Eva.Extension.Set do
     end
   end
 
-  defp stop_server(%__MODULE__{} = set, name) do
+  defp stop_server(%__MODULE__{} = set, name, reason) do
     case server(set, name) do
       nil -> :ok
-      pid -> ExtSupervisor.stop_extension(pid)
+      pid -> ExtSupervisor.stop_extension(pid, reason)
     end
   end
 end

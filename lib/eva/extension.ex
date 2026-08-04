@@ -58,11 +58,19 @@ defmodule Eva.Extension do
   @callback handle_request(request :: term(), state :: term()) ::
               {reply :: term(), state :: term()}
 
+  @typedoc """
+  Why an extension is being stopped.
+  """
+  @type terminate_reason :: :shutdown | :reload | :disabled
+
+  @callback terminate(reason :: terminate_reason(), state :: term()) :: :ok
+
   @optional_callbacks init: 1,
                       handle_event: 2,
                       handle_hook: 3,
                       handle_command: 3,
-                      handle_request: 2
+                      handle_request: 2,
+                      terminate: 2
 
   defmacro __using__(_opts) do
     quote do
@@ -89,11 +97,15 @@ defmodule Eva.Extension do
       @impl true
       def handle_request(_request, state), do: {{:error, :not_implemented}, state}
 
+      @impl true
+      def terminate(_reason, _state), do: :ok
+
       defoverridable init: 1,
                      handle_event: 2,
                      handle_hook: 3,
                      handle_command: 3,
-                     handle_request: 2
+                     handle_request: 2,
+                     terminate: 2
     end
   end
 end

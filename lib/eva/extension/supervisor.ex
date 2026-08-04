@@ -25,8 +25,12 @@ defmodule Eva.Extension.Supervisor do
   @doc """
   Stops an extension.
   """
-  @spec stop_extension(pid(), :shutdown | :reload | :disabled) :: :ok | {:error, :not_found}
-  def stop_extension(pid, _reason \\ :shutdown) do
-    DynamicSupervisor.terminate_child(__MODULE__, pid)
+  @spec stop_extension(pid(), Eva.Extension.terminate_reason()) :: :ok | {:error, :not_found}
+  def stop_extension(pid, reason \\ :shutdown) when is_pid(pid) do
+    GenServer.call(pid, {:stop, reason}, 5_000)
+  catch
+    :exit, _ ->
+      DynamicSupervisor.terminate_child(__MODULE__, pid)
+      :ok
   end
 end

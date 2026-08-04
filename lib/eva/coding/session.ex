@@ -885,7 +885,7 @@ defmodule Eva.Coding.Session do
   # mid-flight. Both `Harness` updates only take effect on the next run, which is why
   # the caller refuses to reload while the agent is running.
   defp do_reload_extensions(%__MODULE__{} = state) do
-    :ok = ExtensionSet.shutdown(state.extensions)
+    :ok = ExtensionSet.shutdown(state.extensions, :reload)
     :ok = state.extensions.loaded |> Map.values() |> Eva.Extension.Loader.purge()
 
     extensions =
