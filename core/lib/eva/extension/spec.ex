@@ -17,8 +17,9 @@ defmodule Eva.Extension.Spec do
     # Extensions can register `/` commands
     field :commands, [Command.t()], default: []
 
-    # Extensions can provide hooks at tool_call, tool_result, or modify user input
-    field :hooks, [:tool_call | :tool_result | :input], default: []
+    # Extensions can provide hooks at tool_call, tool_result, modify user input, or
+    # reshape the messages sent to the model (`:context`)
+    field :hooks, [:tool_call | :tool_result | :input | :context], default: []
 
     # The event classes this extension is concerned with(does it only need :mcp events or :extension events)
     field :event_classes, [Eva.Bus.classes()], default: []

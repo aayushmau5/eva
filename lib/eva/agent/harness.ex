@@ -3,18 +3,7 @@ defmodule Eva.Agent.Harness do
 
   alias Eva.Agent.{Events, Loop, Messages, Tools}
 
-  @event_modules [
-    Events.AgentStart,
-    Events.AgentEnd,
-    Events.TurnStart,
-    Events.TurnEnd,
-    Events.MessageStart,
-    Events.MessageUpdate,
-    Events.MessageEnd,
-    Events.ToolExecutionStart,
-    Events.ToolExecutionUpdate,
-    Events.ToolExecutionEnd
-  ]
+  @event_modules Events.modules()
 
   @type option ::
           {:provider_pid, pid()}
@@ -27,6 +16,7 @@ defmodule Eva.Agent.Harness do
           | {:queue_mode, :one_at_a_time | :all}
           | {:before_tool_call, Loop.before_tool_callback()}
           | {:after_tool_call, Loop.after_tool_callback()}
+          | {:transform_context, Loop.transform_context_callback()}
           | {:name, atom()}
 
   @type options :: [option()]
@@ -95,10 +85,20 @@ defmodule Eva.Agent.Harness do
     GenServer.call(pid, {:update_system_prompt, system_prompt})
   end
 
-  @spec update_hooks(GenServer.server(), Loop.before_tool_callback(), Loop.after_tool_callback()) ::
-          :ok
-  def update_hooks(pid \\ __MODULE__, before_tool_call, after_tool_call) do
-    GenServer.call(pid, {:update_hooks, before_tool_call, after_tool_call})
+  @doc """
+  Swaps the callbacks a future run will use.
+
+  Only takes effect on the next run: `Loop` reads them once when it spawns, so a run
+  already in flight keeps the ones it started with.
+  """
+  @spec update_hooks(
+          GenServer.server(),
+          Loop.before_tool_callback(),
+          Loop.after_tool_callback(),
+          Loop.transform_context_callback() | nil
+        ) :: :ok
+  def update_hooks(pid \\ __MODULE__, before_tool_call, after_tool_call, transform_context \\ nil) do
+    GenServer.call(pid, {:update_hooks, before_tool_call, after_tool_call, transform_context})
   end
 
   @spec change_provider(GenServer.server(), pid()) :: {:ok, map()}
@@ -161,6 +161,7 @@ defmodule Eva.Agent.Harness do
     model = Keyword.get(opts, :model, "")
     before_tool_call = Keyword.get(opts, :before_tool_call)
     after_tool_call = Keyword.get(opts, :after_tool_call)
+    transform_context = Keyword.get(opts, :transform_context)
 
     # Loop crash gets trapped ({:EXIT, ...}) so this process doesn't go down with it.
     Process.flag(:trap_exit, true)
@@ -180,7 +181,8 @@ defmodule Eva.Agent.Harness do
        follow_up_queue: [],
        queue_mode: queue_mode,
        before_tool_call: before_tool_call,
-       after_tool_call: after_tool_call
+       after_tool_call: after_tool_call,
+       transform_context: transform_context
      }}
   end
 
@@ -294,8 +296,18 @@ defmodule Eva.Agent.Harness do
     {:reply, {:ok, state}, state}
   end
 
-  def handle_call({:update_hooks, before_tool_call, after_tool_call}, _from, state) do
-    state = %{state | before_tool_call: before_tool_call, after_tool_call: after_tool_call}
+  def handle_call(
+        {:update_hooks, before_tool_call, after_tool_call, transform_context},
+        _from,
+        state
+      ) do
+    state = %{
+      state
+      | before_tool_call: before_tool_call,
+        after_tool_call: after_tool_call,
+        transform_context: transform_context
+    }
+
     {:reply, :ok, state}
   end
 
@@ -357,7 +369,8 @@ defmodule Eva.Agent.Harness do
           tools: state.tools,
           max_turns: state.max_turns,
           before_tool_call: state.before_tool_call,
-          after_tool_call: state.after_tool_call
+          after_tool_call: state.after_tool_call,
+          transform_context: state.transform_context
         )
       end)
 

@@ -29,7 +29,7 @@ defmodule Eva.Agent.Session.State do
   def from_entries(entries, leaf_id \\ nil) do
     replay_entries = if leaf_id, do: Tree.path_to_entry(entries, leaf_id), else: entries
 
-    # Custom entries are state, not conversation — MCP toggles, extension
+    # Custom entries are state, not conversation — extension
     # enable/disable, and whatever extensions persist. Collect them from the whole
     # path, because the branch-summary truncation below exists to trim what the
     # model re-reads and would otherwise silently discard settings made before the
@@ -140,8 +140,8 @@ defmodule Eva.Agent.Session.State do
 
   Written by `Eva.Extension.API.append_entry/2` and handed back through
   `Eva.Extension.Context` so an extension can rebuild its state on resume. The
-  `ext:` prefix keeps these apart from the `mcp` and `extension` namespaces core
-  writes, so an extension *named* `mcp` cannot read core's server toggles.
+  The `ext:` prefix keeps these apart from the `extension` namespace core writes for
+  enable/disable, so an extension can never read core's own bookkeeping as its state.
   """
   @spec entries_by_extension(t()) :: %{String.t() => [map()]}
   def entries_by_extension(%__MODULE__{custom_entries: entries}) do
@@ -154,18 +154,6 @@ defmodule Eva.Agent.Session.State do
         acc
     end)
     |> Map.new(fn {name, data} -> {name, Enum.reverse(data)} end)
-  end
-
-  @spec mcp_overrides(t()) :: %{String.t() => boolean()}
-  def mcp_overrides(%__MODULE__{custom_entries: entries}) do
-    Enum.reduce(entries, %{}, fn
-      %Entries.Custom{namespace: "mcp", data: %{"server_name" => name, "enabled" => enabled}}, acc
-      when is_binary(name) and is_boolean(enabled) ->
-        Map.put(acc, name, enabled)
-
-      _entry, acc ->
-        acc
-    end)
   end
 
   # Replaces the first matching entry in message_rows whose id is in

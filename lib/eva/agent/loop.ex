@@ -48,6 +48,14 @@ defmodule Eva.Agent.Loop do
           (Messages.ToolCall.t(), Tools.AgentToolResult.t(), boolean() ->
              {Tools.AgentToolResult.t(), boolean()})
 
+  @typedoc """
+  Called with the messages before each provider request. Whatever it returns is what
+  the provider sees.
+
+  Shapes the request only — the transcript keeps the untransformed list.
+  """
+  @type transform_context_callback :: ([Messages.agent_message()] -> [Messages.agent_message()])
+
   @doc """
   Runs the agent loop.
 
@@ -67,6 +75,10 @@ defmodule Eva.Agent.Loop do
       Return `:proceed` to allow execution or `{:block, reason}` to skip it.
     * `:after_tool_call` — optional callback. Called after each tool call (even
       blocked or failed ones). Can transform the result and error flag.
+    * `:transform_context` — optional callback. Called with the message list before
+      *every* provider request, and its return value is what the provider sees. The
+      transcript is unaffected, so injected context is recomputed per request rather
+      than persisted. Returning a non-list leaves the messages alone.
 
   ## Returns
 
@@ -86,7 +98,8 @@ defmodule Eva.Agent.Loop do
       max_turns: Keyword.get(opts, :max_turns),
       stream_timeout: Keyword.get(opts, :stream_timeout, 120_000),
       before_tool_callback: Keyword.get(opts, :before_tool_call),
-      after_tool_callback: Keyword.get(opts, :after_tool_call)
+      after_tool_callback: Keyword.get(opts, :after_tool_call),
+      transform_context: Keyword.get(opts, :transform_context)
     }
 
     messages = Keyword.get(opts, :messages, [])
@@ -211,11 +224,24 @@ defmodule Eva.Agent.Loop do
       listener_pid: self(),
       model: ctx.model,
       system_prompt: ctx.system_prompt,
-      messages: messages,
+      messages: transform_context(ctx, messages),
       tools: ctx.tools
     })
 
     collect_response(ctx)
+  end
+
+  # The transformed context is not persisted and get recomputed again on each consecutive turn.
+  # Might bite later, but not enough clarity yet so keeping it.
+  #
+  # A turn with tool calls makes several requests, and each one goes through here.
+  defp transform_context(%{transform_context: nil}, messages), do: messages
+
+  defp transform_context(%{transform_context: fun}, messages) when is_function(fun, 1) do
+    case fun.(messages) do
+      transformed when is_list(transformed) -> transformed
+      _other -> messages
+    end
   end
 
   defp collect_response(ctx) do
