@@ -17,9 +17,15 @@ defmodule Eva.Extension.LoaderTest do
     path
   end
 
-  defp valid_extension(uid \\ System.unique_integer([:positive])) do
+  # An extension's module has to match its name, so the two travel together: the file
+  # is `<name>.exs` and the module is `Eva.Extension.<Name>`.
+  defp unique(prefix), do: "#{prefix}_#{System.unique_integer([:positive])}"
+
+  defp module_for(name), do: Eva.Extension.namespace(name)
+
+  defp valid_extension(name) do
     ~s'''
-    defmodule TestExtension_#{uid} do
+    defmodule #{inspect(module_for(name))} do
       use Eva.Extension
 
       def setup(_ctx) do
@@ -29,9 +35,9 @@ defmodule Eva.Extension.LoaderTest do
     '''
   end
 
-  defp extension_with_no_setup(uid \\ System.unique_integer([:positive])) do
+  defp extension_with_no_setup(name) do
     ~s'''
-    defmodule TestBadExtension_#{uid} do
+    defmodule #{inspect(module_for(name))} do
       use Eva.Extension
 
       def init(_ctx), do: {:ok, nil}
@@ -47,9 +53,9 @@ defmodule Eva.Extension.LoaderTest do
     '''
   end
 
-  defp stateful_extension(uid \\ System.unique_integer([:positive])) do
+  defp stateful_extension(name) do
     ~s'''
-    defmodule StatefulTest_#{uid} do
+    defmodule #{inspect(module_for(name))} do
       use Eva.Extension
 
       def setup(_ctx) do
@@ -67,11 +73,11 @@ defmodule Eva.Extension.LoaderTest do
       tmp = tmp_dir()
       extensions_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(extensions_dir)
-      write_extension(extensions_dir, "my_ext.exs", valid_extension())
+      write_extension(extensions_dir, "my_ext.exs", valid_extension("my_ext"))
 
       resources = %Resources{root: tmp}
 
-      candidates = Loader.candidates(resources)
+      {candidates, _blocked} = Loader.candidates(resources)
 
       assert List.keymember?(candidates, "my_ext", 0)
     end
@@ -81,11 +87,11 @@ defmodule Eva.Extension.LoaderTest do
       extensions_dir = Path.join(tmp, "extensions")
       ext_dir = Path.join(extensions_dir, "my_package")
       File.mkdir_p!(ext_dir)
-      File.write!(Path.join(ext_dir, "extension.exs"), valid_extension())
+      File.write!(Path.join(ext_dir, "extension.exs"), valid_extension("my_package"))
 
       resources = %Resources{root: tmp}
 
-      candidates = Loader.candidates(resources)
+      {candidates, _blocked} = Loader.candidates(resources)
 
       assert List.keymember?(candidates, "my_package", 0)
     end
@@ -99,7 +105,7 @@ defmodule Eva.Extension.LoaderTest do
 
       resources = %Resources{root: tmp}
 
-      candidates = Loader.candidates(resources)
+      {candidates, _blocked} = Loader.candidates(resources)
 
       refute List.keymember?(candidates, "README", 0)
       refute List.keymember?(candidates, "script", 0)
@@ -108,11 +114,11 @@ defmodule Eva.Extension.LoaderTest do
     test "extra_paths arg allows explicit file paths" do
       tmp = tmp_dir()
 
-      write_extension(tmp, "direct.exs", valid_extension())
+      write_extension(tmp, "direct.exs", valid_extension("direct"))
 
       resources = %Resources{root: tmp}
 
-      candidates = Loader.candidates(resources, [Path.join(tmp, "direct.exs")])
+      {candidates, _blocked} = Loader.candidates(resources, [Path.join(tmp, "direct.exs")])
 
       assert List.keymember?(candidates, "direct", 0)
     end
@@ -121,11 +127,11 @@ defmodule Eva.Extension.LoaderTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "dir_ext")
       File.mkdir_p!(ext_dir)
-      File.write!(Path.join(ext_dir, "extension.exs"), valid_extension())
+      File.write!(Path.join(ext_dir, "extension.exs"), valid_extension("dir_ext"))
 
       resources = %Resources{root: tmp}
 
-      candidates = Loader.candidates(resources, [ext_dir])
+      {candidates, _blocked} = Loader.candidates(resources, [ext_dir])
 
       assert List.keymember?(candidates, "dir_ext", 0)
     end
@@ -136,12 +142,12 @@ defmodule Eva.Extension.LoaderTest do
       project_ext = Path.join([tmp, ".eva", "extensions"])
       File.mkdir_p!(global_ext)
       File.mkdir_p!(project_ext)
-      write_extension(global_ext, "shared.exs", valid_extension())
-      write_extension(project_ext, "shared.exs", valid_extension())
+      write_extension(global_ext, "shared.exs", valid_extension("shared"))
+      write_extension(project_ext, "shared.exs", valid_extension("shared"))
 
       resources = %Resources{root: tmp}
 
-      candidates = Loader.candidates(resources)
+      {candidates, _blocked} = Loader.candidates(resources)
 
       matched = Enum.filter(candidates, fn {name, _path} -> name == "shared" end)
       assert length(matched) == 1
@@ -152,7 +158,7 @@ defmodule Eva.Extension.LoaderTest do
 
       resources = %Resources{root: tmp}
 
-      candidates = Loader.candidates(resources)
+      {candidates, _blocked} = Loader.candidates(resources)
 
       assert candidates == []
     end
@@ -161,21 +167,23 @@ defmodule Eva.Extension.LoaderTest do
   describe "load/1" do
     test "loads a valid extension" do
       tmp = tmp_dir()
-      write_extension(tmp, "hello.exs", valid_extension())
+      name = unique("hello")
+      path = write_extension(tmp, "#{name}.exs", valid_extension(name))
 
-      {loaded, diagnostics} = Loader.load([{"hello", Path.join(tmp, "hello.exs")}])
+      {loaded, diagnostics} = Loader.load([{name, path}])
 
       assert diagnostics == []
       assert length(loaded) == 1
-      assert hd(loaded).name == "hello"
-      assert is_atom(hd(loaded).module)
+      assert hd(loaded).name == name
+      assert hd(loaded).module == module_for(name)
     end
 
     test "reports diagnostic for extension without setup/1" do
       tmp = tmp_dir()
-      write_extension(tmp, "bad.exs", extension_with_no_setup())
+      name = unique("bad")
+      path = write_extension(tmp, "#{name}.exs", extension_with_no_setup(name))
 
-      {loaded, diagnostics} = Loader.load([{"bad", Path.join(tmp, "bad.exs")}])
+      {loaded, diagnostics} = Loader.load([{name, path}])
 
       assert loaded == []
       assert length(diagnostics) == 1
@@ -193,9 +201,72 @@ defmodule Eva.Extension.LoaderTest do
       assert String.contains?(hd(diagnostics), "no module that uses Eva.Extension")
     end
 
+    test "refuses a module outside the Eva.Extension namespace" do
+      tmp = tmp_dir()
+      name = unique("outsider")
+
+      path =
+        write_extension(tmp, "#{name}.exs", ~s'''
+        defmodule NotNamespaced_#{System.unique_integer([:positive])} do
+          use Eva.Extension
+
+          def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+        end
+        ''')
+
+      {loaded, diagnostics} = Loader.load([{name, path}])
+
+      assert loaded == []
+      assert String.contains?(hd(diagnostics), "must be namespaced under Eva.Extension.*")
+    end
+
+    test "refuses an extension claiming another extension's name" do
+      tmp = tmp_dir()
+      name = unique("impostor")
+      other = unique("victim")
+
+      path =
+        write_extension(tmp, "#{name}.exs", ~s'''
+        defmodule #{inspect(module_for(other))} do
+          use Eva.Extension
+
+          def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+        end
+        ''')
+
+      {loaded, diagnostics} = Loader.load([{name, path}])
+
+      assert loaded == []
+      assert String.contains?(hd(diagnostics), "must define #{inspect(module_for(name))}")
+    end
+
+    test "accepts modules nested under the extension's own namespace" do
+      tmp = tmp_dir()
+      name = unique("nested")
+
+      path =
+        write_extension(tmp, "#{name}.exs", ~s'''
+        defmodule #{inspect(module_for(name))}.Client do
+          def ping, do: :pong
+        end
+
+        defmodule #{inspect(module_for(name))} do
+          use Eva.Extension
+
+          def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+        end
+        ''')
+
+      {loaded, diagnostics} = Loader.load([{name, path}])
+
+      assert diagnostics == []
+      assert hd(loaded).module == module_for(name)
+      assert Module.concat(module_for(name), Client) in hd(loaded).modules
+    end
+
     test "reports diagnostic for file with compile error" do
       tmp = tmp_dir()
-      File.write!(Path.join(tmp, "broken.exs"), "{{{" <> valid_extension())
+      File.write!(Path.join(tmp, "broken.exs"), "{{{" <> valid_extension("broken"))
 
       {loaded, diagnostics} = Loader.load([{"broken", Path.join(tmp, "broken.exs")}])
 
@@ -206,13 +277,14 @@ defmodule Eva.Extension.LoaderTest do
 
     test "loads a stateful extension" do
       tmp = tmp_dir()
-      write_extension(tmp, "stateful.exs", stateful_extension())
+      name = unique("stateful")
+      path = write_extension(tmp, "#{name}.exs", stateful_extension(name))
 
-      {loaded, diagnostics} = Loader.load([{"stateful", Path.join(tmp, "stateful.exs")}])
+      {loaded, diagnostics} = Loader.load([{name, path}])
 
       assert diagnostics == []
       assert length(loaded) == 1
-      assert is_atom(hd(loaded).module)
+      assert hd(loaded).module == module_for(name)
     end
   end
 
@@ -221,7 +293,8 @@ defmodule Eva.Extension.LoaderTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "discoverable.exs", valid_extension())
+      name = unique("discoverable")
+      write_extension(ext_dir, "#{name}.exs", valid_extension(name))
 
       resources = %Resources{root: tmp}
 
@@ -229,22 +302,65 @@ defmodule Eva.Extension.LoaderTest do
 
       assert diagnostics == []
       assert length(loaded) == 1
-      assert hd(loaded).name == "discoverable"
+      assert hd(loaded).name == name
     end
   end
 
   describe "purge/1" do
     test "unloads modules so they can be reloaded" do
       tmp = tmp_dir()
-      path = write_extension(tmp, "purge_test.exs", valid_extension())
+      name = unique("purge_test")
+      path = write_extension(tmp, "#{name}.exs", valid_extension(name))
 
-      {loaded, _diagnostics} = Loader.load([{"purge_test", path}])
+      {loaded, _diagnostics} = Loader.load([{name, path}])
       assert length(loaded) == 1
 
       mod = hd(loaded).module
       :ok = Loader.purge(loaded)
 
       refute function_exported?(mod, :setup, 1)
+    end
+
+    test "reloads modules the extension required itself" do
+      tmp = tmp_dir()
+      name = unique("parent")
+      extension = module_for(name)
+      helper = Module.concat(extension, Helper)
+
+      write_extension(tmp, "helper.exs", ~s'''
+      defmodule #{inspect(helper)} do
+        def value, do: :before
+      end
+      ''')
+
+      path =
+        write_extension(tmp, "#{name}.exs", ~s'''
+        Code.require_file(Path.join(__DIR__, "helper.exs"))
+
+        defmodule #{inspect(extension)} do
+          use Eva.Extension
+
+          def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+          def value, do: #{inspect(helper)}.value()
+        end
+        ''')
+
+      {loaded, []} = Loader.load([{name, path}])
+      assert extension.value() == :before
+      assert helper in hd(loaded).modules
+
+      # The sibling changing on disk is the whole point — a purge that only knows
+      # about the marker module leaves this at `:before` with no error.
+      write_extension(tmp, "helper.exs", ~s'''
+      defmodule #{inspect(helper)} do
+        def value, do: :after
+      end
+      ''')
+
+      :ok = Loader.purge(loaded)
+      {[_reloaded], []} = Loader.load([{name, path}])
+
+      assert extension.value() == :after
     end
   end
 end

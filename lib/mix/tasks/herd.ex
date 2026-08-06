@@ -13,8 +13,6 @@ defmodule Mix.Tasks.Herd do
   alias Eva.Coding.Session, as: CodingSession
   alias Eva.Coding.Session.SessionConfig
 
-  alias Eva.MCP.Events, as: MCPEvents
-
   @impl true
   def run(args) do
     # Application.ensure_all_started(Eva.Application)
@@ -109,52 +107,17 @@ defmodule Mix.Tasks.Herd do
         IO.puts([icon, IO.ANSI.reset(), " ", event.tool_name])
         receive_stream()
 
-      %MCPEvents.ServerConnected{} = message ->
-        IO.puts([
-          IO.ANSI.cyan(),
-          "  ● ",
-          IO.ANSI.reset(),
-          message.server_name,
-          IO.ANSI.faint(),
-          " v#{message.server_version}",
-          IO.ANSI.reset()
-        ])
-
-        receive_stream()
-
-      %MCPEvents.ServerError{} = message ->
-        IO.puts([
-          :stderr,
-          IO.ANSI.yellow(),
-          "  ⚠ ",
-          IO.ANSI.reset(),
-          message.server_name,
-          ": ",
-          message.error
-        ])
-
-        receive_stream()
-
-      %MCPEvents.ToolsDiscovered{} = message ->
+      # MCP is an extension now, so its events arrive wrapped rather than as core
+      # structs. Everything an extension publishes looks like this.
+      %Events.ExtensionEvent{extension: name, payload: payload} ->
         IO.puts([
           IO.ANSI.faint(),
           "  ◆ ",
           IO.ANSI.reset(),
-          message.server_name,
+          name,
           IO.ANSI.faint(),
-          " (#{length(message.tools)} tools)",
-          IO.ANSI.reset()
-        ])
-
-        receive_stream()
-
-      %MCPEvents.ServerLog{} = message ->
-        IO.puts([
-          IO.ANSI.faint(),
-          "  [",
-          message.server_name,
-          "] ",
-          message.message,
+          " ",
+          summarize_extension_event(payload),
           IO.ANSI.reset()
         ])
 
@@ -176,6 +139,14 @@ defmodule Mix.Tasks.Herd do
         receive_stream()
     end
   end
+
+  # An extension's payload is its own business, so there is nothing to pattern match on —
+  # show the struct name when there is one and fall back to a plain inspect.
+  defp summarize_extension_event(%{__struct__: module} = payload) do
+    [inspect(module), " ", inspect(Map.get(payload, :server_name, ""))]
+  end
+
+  defp summarize_extension_event(payload), do: inspect(payload)
 
   defp format_arg_summary(args) when map_size(args) == 0, do: ""
 

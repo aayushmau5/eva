@@ -20,10 +20,9 @@ defmodule Eva.Agent.Session.StateTest do
              } = State.entries_by_extension(state)
     end
 
-    test "core's own namespaces are invisible, even to a same-named extension" do
+    test "core's own namespace is invisible, even to a same-named extension" do
       state = %State{
         custom_entries: [
-          custom("mcp", %{"server_name" => "github", "enabled" => false}),
           custom("extension", %{"name" => "notes", "enabled" => false})
         ]
       }
@@ -35,20 +34,22 @@ defmodule Eva.Agent.Session.StateTest do
   describe "custom entries and branch summaries" do
     test "settings written before a branch summary survive the replay" do
       # A branch summary truncates the *conversation* so the model does not re-read
-      # what was summarised. Custom entries are settings, not conversation — losing
-      # them here means a disabled MCP server or an "always allow" silently comes back.
+      # what was summarised. Custom entries are settings, not conversation — losing them
+      # here means a disabled MCP server or an "always allow" silently comes back.
       entries = [
         message("m1"),
         custom("ext:gate", %{"allow" => "rm -rf ./build"}),
-        custom("mcp", %{"server_name" => "github", "enabled" => false}),
+        custom("ext:mcp", %{"server" => "github", "enabled" => false}),
         branch_summary("summarised"),
         message("m2")
       ]
 
       state = State.from_entries(entries)
 
-      assert %{"gate" => [%{"allow" => "rm -rf ./build"}]} = State.entries_by_extension(state)
-      assert %{"github" => false} = State.mcp_overrides(state)
+      assert %{
+               "gate" => [%{"allow" => "rm -rf ./build"}],
+               "mcp" => [%{"server" => "github", "enabled" => false}]
+             } = State.entries_by_extension(state)
     end
 
     test "the conversation is still truncated" do

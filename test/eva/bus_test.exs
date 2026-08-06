@@ -1,14 +1,31 @@
+# A host's own event, of the kind `register_events/2` exists for. Eva used to register
+# `Eva.MCP.Events.*` this way; now that MCP is an extension, nothing in the tree does, so
+# the mechanism needs an event of its own to be tested against.
+defmodule Eva.BusTest.HostEvent do
+  defstruct [:detail]
+end
+
 defmodule Eva.BusTest do
   use ExUnit.Case, async: true
 
   alias Eva.Bus
   alias Eva.Agent.Events, as: AgentEvents
-  alias Eva.MCP.Events, as: MCPEvents
+  alias Eva.BusTest.HostEvent
   alias Eva.Agent.Messages
 
+  setup_all do
+    :ok = Bus.register_events([HostEvent], :host_test)
+  end
+
   describe "classes/0" do
-    test "returns the five event classes" do
-      assert Bus.classes() == [:stream, :lifecycle, :tools, :mcp, :extension]
+    test "returns the built-in classes plus whatever the host registered" do
+      classes = Bus.classes()
+
+      for built_in <- [:stream, :lifecycle, :tools, :extension] do
+        assert built_in in classes
+      end
+
+      assert :host_test in classes
     end
   end
 
@@ -136,19 +153,22 @@ defmodule Eva.BusTest do
       assert_receive %AgentEvents.ToolExecutionEnd{}
     end
 
-    test "forwards MCP events to :mcp subscribers" do
+    test "forwards a registered host event to that class's subscribers" do
       session_pid = self()
-      Bus.subscribe(session_pid, [:mcp])
+      Bus.subscribe(session_pid, [:host_test])
 
-      event = %MCPEvents.ServerConnected{
-        server_name: "test-server",
-        scope_dir: :global,
-        server_version: "1.0",
-        protocol_version: "2025"
-      }
+      Bus.publish(session_pid, %HostEvent{detail: "registered"})
 
-      Bus.publish(session_pid, event)
-      assert_receive %MCPEvents.ServerConnected{server_name: "test-server"}
+      assert_receive %HostEvent{detail: "registered"}
+    end
+
+    test "an event nobody registered is a lifecycle event, not a crash" do
+      session_pid = self()
+      Bus.subscribe(session_pid, [:lifecycle])
+
+      Bus.publish(session_pid, %Eva.Extension.Context{name: "not an event"})
+
+      assert_receive %Eva.Extension.Context{name: "not an event"}
     end
 
     test "forwards unknown events to :lifecycle subscribers" do

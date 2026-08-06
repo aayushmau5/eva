@@ -24,28 +24,13 @@ defmodule Eva.Coding.Session do
   alias Eva.Coding.SessionName
   alias Eva.Coding.ProjectContext
 
-  alias Eva.MCP
+  @harness_events AgentEvents.modules()
 
-  @harness_events [
-    AgentEvents.AgentStart,
-    AgentEvents.AgentEnd,
-    AgentEvents.TurnStart,
-    AgentEvents.TurnEnd,
-    AgentEvents.MessageStart,
-    AgentEvents.MessageUpdate,
-    AgentEvents.MessageEnd,
-    AgentEvents.ToolExecutionStart,
-    AgentEvents.ToolExecutionUpdate,
-    AgentEvents.ToolExecutionEnd
-  ]
-
-  @mcp_namespace "mcp"
   @extension_namespace "extension"
 
   # Entries an extension writes are namespaced by its own name under this prefix.
   # Kept in sync with `Eva.Agent.Session.State`.
   @extension_entry_prefix "ext:"
-  @mcp_events MCP.Events.modules()
 
   # Config passed during init
   typedstruct module: SessionConfig do
@@ -87,7 +72,6 @@ defmodule Eva.Coding.Session do
     field :provider_config, ProviderConfig.t()
     field :auto_name_attempted, boolean(), default: false
     field :base_tools, [AgentTools.AgentTool.t()], default: []
-    field :mcp, MCP.SessionServers.t()
     field :extensions, ExtensionSet.t()
     # for terminal escape hatch
     field :bash_run,
@@ -157,11 +141,6 @@ defmodule Eva.Coding.Session do
     GenServer.call(pid, :available_models)
   end
 
-  @spec list_mcp_servers(pid()) :: [MCP.SessionServers.server_info()]
-  def list_mcp_servers(pid) do
-    GenServer.call(pid, :list_mcp_servers)
-  end
-
   @spec rename_session(pid(), String.t()) :: String.t()
   def rename_session(pid, name) do
     GenServer.call(pid, {:rename_session, name})
@@ -190,21 +169,6 @@ defmodule Eva.Coding.Session do
   @spec cancel_bash(pid()) :: :ok
   def cancel_bash(pid) do
     GenServer.call(pid, :cancel_bash)
-  end
-
-  @doc """
-  Enables or disables an MCP server.
-
-  `:session` records the choice in this session's transcript, so it survives a resume
-  and leaves other sessions alone. `:persist` writes `enabled` back to the `mcp.json`
-  the server came from and clears any session override, so every *new* session picks
-  it up — sessions already running keep what they have.
-  """
-  @spec set_mcp_enabled(pid(), String.t(), boolean(), :session | :persist) ::
-          {:ok, [MCP.SessionServers.server_info()]} | {:error, term()}
-  def set_mcp_enabled(pid, server_name, enabled?, scope \\ :session)
-      when is_boolean(enabled?) and scope in [:session, :persist] do
-    GenServer.call(pid, {:set_mcp_enabled, server_name, enabled?, scope})
   end
 
   @doc """
@@ -246,6 +210,21 @@ defmodule Eva.Coding.Session do
   @spec reload_extensions(pid()) :: {:ok, [String.t()]} | {:error, :agent_running}
   def reload_extensions(pid) do
     GenServer.call(pid, :reload_extensions, 30_000)
+  end
+
+  @doc """
+  Approves this project's extension directories and loads what is in them.
+
+  Project extensions run before the first prompt, so they are skipped until the user asks
+  for them by name — this is that ask. Consent covers the directory as it stands now;
+  changing an extension asks again.
+
+  Returns the directories approved, or `{:ok, []}` when nothing was waiting. Refused while
+  the agent is running, for the same reason a reload is: it *is* a reload.
+  """
+  @spec trust_extensions(pid()) :: {:ok, [String.t()]} | {:error, term()}
+  def trust_extensions(pid) do
+    GenServer.call(pid, :trust_extensions, 30_000)
   end
 
   @doc """
@@ -297,9 +276,6 @@ defmodule Eva.Coding.Session do
         do: load_resources(%Eva.Coding.Resources{cwd: config.cwd}, config.context_files),
         else: config.resource_paths
 
-    mcp =
-      MCP.SessionServers.new(session_resources(config), SessionState.mcp_overrides(session_state))
-
     # TODO: there's a chance of optimising this. Since it's sync and extension scripts are compiled and loaded, this
     # can be slow for a large number of extensions.
     extensions =
@@ -325,7 +301,8 @@ defmodule Eva.Coding.Session do
         tools: tools,
         messages: session_state.messages,
         before_tool_call: ExtensionHooks.before_tool_call_fun(hook_targets),
-        after_tool_call: ExtensionHooks.after_tool_call_fun(hook_targets)
+        after_tool_call: ExtensionHooks.after_tool_call_fun(hook_targets),
+        transform_context: ExtensionHooks.context_fun(hook_targets)
       )
 
     # Subscribe the listener to the event bus
@@ -333,6 +310,11 @@ defmodule Eva.Coding.Session do
     if config.listener_pid do
       Eva.Bus.subscribe_pid(config.listener_pid, self(), Eva.Bus.classes())
     end
+
+    # An extension node started after this session is the normal case, not an edge one —
+    # someone runs `mix eva.ext.start mcp` while Eva is up. A no-op when distribution is
+    # off, which is the default.
+    :ok = Eva.Cluster.subscribe()
 
     {:noreply,
      %__MODULE__{
@@ -349,7 +331,6 @@ defmodule Eva.Coding.Session do
          pending_initial_entries: pending_initial_entries,
          config: %SessionConfig{config | system_prompt: system_prompt},
          base_tools: tools,
-         mcp: mcp,
          extensions: extensions
      }}
   end
@@ -396,26 +377,6 @@ defmodule Eva.Coding.Session do
     {:reply, OpenAICompatibleProvider.list_models(state.config.provider_config), state}
   end
 
-  def handle_call(:list_mcp_servers, _from, %__MODULE__{} = state) do
-    {:reply, MCP.SessionServers.list(state.mcp), state}
-  end
-
-  def handle_call({:set_mcp_enabled, server_name, enabled?, scope}, _from, %__MODULE__{} = state) do
-    case MCP.SessionServers.set_enabled(state.mcp, server_name, enabled?, scope) do
-      {:ok, mcp} ->
-        state = %__MODULE__{state | mcp: mcp}
-        # The transcript is the session's to write; `MCP.SessionServers` owns the config
-        # and the clients, not our storage.
-        state =
-          if scope == :session, do: append_mcp_toggle(state, server_name, enabled?), else: state
-
-        {:reply, {:ok, MCP.SessionServers.list(mcp)}, state}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
-  end
-
   def handle_call(:list_extensions, _from, %__MODULE__{} = state) do
     {:reply, ExtensionSet.list(state.extensions), state}
   end
@@ -438,6 +399,22 @@ defmodule Eva.Coding.Session do
     else
       state = do_reload_extensions(state)
       {:reply, {:ok, ExtensionSet.diagnostics(state.extensions)}, state}
+    end
+  end
+
+  def handle_call(:trust_extensions, _from, %__MODULE__{} = state) do
+    cond do
+      Harness.running?(state.harness_pid) ->
+        {:reply, {:error, :agent_running}, state}
+
+      state.extensions.blocked_dirs == [] ->
+        {:reply, {:ok, []}, state}
+
+      true ->
+        case ExtensionSet.trust_all(state.extensions) do
+          {:ok, approved} -> {:reply, {:ok, approved}, do_reload_extensions(state)}
+          {:error, reason} -> {:reply, {:error, reason}, state}
+        end
     end
   end
 
@@ -622,11 +599,31 @@ defmodule Eva.Coding.Session do
     {:noreply, state}
   end
 
-  def handle_info(%{__struct__: mod} = event, %__MODULE__{} = state) when mod in @mcp_events do
-    state = %__MODULE__{state | mcp: MCP.SessionServers.apply_event(state.mcp, event)}
-    forward_event(state, event)
-    {:noreply, state}
+  # -- Membership of extensions running on other nodes (see `Eva.Cluster`) --
+
+  def handle_info({:cluster_member_up, %{role: :extension} = member}, %__MODULE__{} = state) do
+    opts =
+      extension_opts(
+        state.config,
+        state.base_tools,
+        state.extensions.overrides,
+        state.session_state
+      )
+
+    extensions = ExtensionSet.add_member(state.extensions, member, self(), opts)
+
+    # Its tools land at the next prompt: `refresh_tools/1` runs there, and `Harness` is
+    # inert mid-run anyway.
+    {:noreply, rebind_extensions(%__MODULE__{state | extensions: extensions})}
   end
+
+  def handle_info({:cluster_member_down, %{role: :extension} = member}, %__MODULE__{} = state) do
+    extensions = ExtensionSet.drop(state.extensions, member.name, :shutdown)
+    {:noreply, rebind_extensions(%__MODULE__{state | extensions: extensions})}
+  end
+
+  def handle_info({:cluster_member_up, _member}, state), do: {:noreply, state}
+  def handle_info({:cluster_member_down, _member}, state), do: {:noreply, state}
 
   # -- Messages from extensions (see `Eva.Extension.API`) --
   #
@@ -724,18 +721,18 @@ defmodule Eva.Coding.Session do
     {:noreply, %__MODULE__{state | bash_run: nil}}
   end
 
-  @doc """
-  Records a session-scoped MCP enable/disable in the transcript.
+  # A remote extension's process dying — usually its whole node going away. Nothing
+  # unregisters it for us the way the local `Processes` registry would, so the monitor
+  # taken when it was instantiated is what keeps the set honest.
+  def handle_info({:DOWN, _ref, :process, pid, _reason}, %__MODULE__{} = state)
+      when is_pid(pid) do
+    extensions = ExtensionSet.drop(state.extensions, pid, :shutdown)
 
-  Written as a `Custom` entry. `data` keys are strings so an entry built here and one
-  replayed from jsonl are indistinguishable.
-  """
-  @spec append_mcp_toggle(t(), String.t(), boolean()) :: t()
-  def append_mcp_toggle(%__MODULE__{} = state, server_name, enabled) do
-    append_custom_entry(state, @mcp_namespace, %{
-      "server_name" => server_name,
-      "enabled" => enabled
-    })
+    if extensions == state.extensions do
+      {:noreply, state}
+    else
+      {:noreply, rebind_extensions(%__MODULE__{state | extensions: extensions})}
+    end
   end
 
   @doc """
@@ -918,7 +915,8 @@ defmodule Eva.Coding.Session do
       Harness.update_hooks(
         state.harness_pid,
         ExtensionHooks.before_tool_call_fun(hook_targets),
-        ExtensionHooks.after_tool_call_fun(hook_targets)
+        ExtensionHooks.after_tool_call_fun(hook_targets),
+        ExtensionHooks.context_fun(hook_targets)
       )
 
     state
@@ -1088,15 +1086,14 @@ defmodule Eva.Coding.Session do
   # Rebuilt at every prompt rather than kept in sync from events, because
   # `Harness.update_tools/2` is inert mid-run — `Loop` takes `tools:` by value
   # at spawn and freezes `tool_by_name`. A prompt is therefore the only moment
-  # a tool list change can take effect, and doing it here is also what gets
-  # MCP tools into the *first* prompt of a session.
+  # a tool list change can take effect, and doing it here is also what gets an
+  # extension's tools into the *first* prompt of a session, before it has had time
+  # to push any.
   defp refresh_tools(%__MODULE__{} = state) do
     {:ok, _harness_state} =
       Harness.update_tools(
         state.harness_pid,
-        state.base_tools ++
-          MCP.SessionServers.tools(state.mcp) ++
-          ExtensionSet.tools(state.extensions)
+        state.base_tools ++ ExtensionSet.tools(state.extensions)
       )
 
     :ok

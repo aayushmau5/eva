@@ -15,7 +15,7 @@ defmodule Eva.MixProject do
 
   def cli do
     [
-      preferred_envs: [precommit: :test]
+      preferred_envs: [precommit: :test, "test.all": :test]
     ]
   end
 
@@ -41,9 +41,9 @@ defmodule Eva.MixProject do
       #   aka: CVE-2026-56810, GHSA-c59h-fq4p-r36r
       #   mint buffers an entire chunked response chunk in memory in Mint.HTTP1.decode_body/5
       #   https://osv.dev/vulnerability/EEF-CVE-2026-56810
+      {:eva_core, path: "core"},
       {:finch, "~> 0.23"},
       {:typedstruct, "~> 0.5"},
-      {:uuid, "~> 1.1"},
       {:mime, "~> 2.0"},
       {:erlexec, "~> 2.0"}
     ]
@@ -51,7 +51,30 @@ defmodule Eva.MixProject do
 
   defp aliases do
     [
-      precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
+      # A path dependency compiles with its parent but is otherwise its own project —
+      # neither its tests nor its formatting are reached from here, so ask for both.
+      precommit: [
+        "compile --warnings-as-errors",
+        "deps.unlock --unused",
+        "format.all",
+        "test.all"
+      ],
+      "format.all": [
+        "format",
+        "cmd --cd core mix format",
+        "cmd --cd ext/mcp mix format"
+      ],
+      "test.all": [
+        "test",
+        "test.dist",
+        "cmd --cd core mix test",
+        "cmd --cd ext/mcp mix test"
+      ],
+      # Distributed tests need a named VM, and a VM cannot be named after it has booted
+      # without breaking references already held to `nonode@nohost`.
+      "test.dist": [
+        "cmd elixir --name eva_test@127.0.0.1 -S mix test --only distributed"
+      ]
     ]
   end
 

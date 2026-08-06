@@ -1,7 +1,7 @@
 defmodule Eva.Extension.Set do
   @moduledoc """
   Every loaded extension for one session, merged into one view.
-  A plain struct, not a process..
+  A plain struct, not a process.
 
   `specs` is the source of truth; tools, guidelines, commands and hook targets are
   derived from it on demand.
@@ -11,9 +11,14 @@ defmodule Eva.Extension.Set do
 
   alias Eva.Agent.Tools
   alias Eva.Coding.Resources
-  alias Eva.Extension.{Context, Hooks, Loader, Processes, Spec}
+  alias Eva.Cluster
+  alias Eva.Extension.{Context, Hooks, Loader, Processes, Spec, Trust}
   alias Eva.Extension.Loader.Loaded
   alias Eva.Extension.Supervisor, as: ExtSupervisor
+
+  # Instantiating reaches across a node boundary and runs the extension's `setup/1` and
+  # `init/1`, which are the extension author's code — generous, but not unbounded.
+  @remote_timeout 15_000
 
   typedstruct do
     field :resources, Resources.t()
@@ -23,6 +28,15 @@ defmodule Eva.Extension.Set do
     field :specs, %{String.t() => Spec.t()}, default: %{}
     field :builtin_tool_names, [String.t()], default: []
     field :overrides, %{String.t() => boolean()}, default: %{}
+    # Extension directories skipped for want of consent. Kept apart from `diagnostics` so
+    # `trust_all/1` knows what there is to approve without parsing its own messages back.
+    field :blocked_dirs, [String.t()], default: []
+    # Extensions running on another node. Their processes cannot be in the local
+    # `Processes` registry — it exists on both nodes, but they are separate tables — so
+    # their pids live here instead.
+    field :remote, %{String.t() => pid()}, default: %{}
+    # What the directory said about each remote extension, for `list/1`.
+    field :members, %{String.t() => map()}, default: %{}
     field :diagnostics, [String.t()], default: []
   end
 
@@ -33,9 +47,10 @@ defmodule Eva.Extension.Set do
   def load(%Resources{} = resources, session_pid, opts \\ %{}) do
     overrides = Map.get(opts, :overrides, %{})
 
+    {candidates, blocked} = Loader.candidates(resources, Map.get(opts, :extra_paths, []))
+
     {loaded, diagnostics} =
-      resources
-      |> Loader.candidates(Map.get(opts, :extra_paths, []))
+      candidates
       |> Enum.filter(fn {name, _path} -> enabled?(overrides, name) end)
       |> Loader.load()
 
@@ -44,12 +59,50 @@ defmodule Eva.Extension.Set do
       session_pid: session_pid,
       builtin_tool_names: Map.get(opts, :builtin_tool_names, []),
       overrides: overrides,
-      diagnostics: diagnostics
+      blocked_dirs: blocked,
+      diagnostics: Enum.map(blocked, &Loader.untrusted_diagnostic/1) ++ diagnostics
     }
 
     loaded
     |> Enum.reduce(base, &add_extension(&2, &1, session_pid, opts))
+    |> add_announced(session_pid, opts)
     |> finalize()
+  end
+
+  @doc """
+  Instantiates an extension that announced itself after this set was built.
+
+  A node started while Eva is running is the normal case — the user runs
+  `mix eva.ext.start mcp` mid-session — so this is not an edge path. Its tools arrive
+  through `API.update_tools/2` and land at the next prompt, exactly as they do for an
+  extension that was already up.
+  """
+  @spec add_member(t(), map(), pid(), map()) :: t()
+  def add_member(%__MODULE__{} = set, member, session_pid, opts \\ %{}) do
+    cond do
+      not enabled?(set.overrides, member.name) ->
+        set
+
+      member.name in set.order ->
+        add_diagnostic(
+          set,
+          "#{member.name} announced from #{member.node}, but a local extension already " <>
+            "has that name — the local one is being used"
+        )
+
+      true ->
+        set
+        |> add_remote(member, session_pid, opts)
+        |> move_last(member.name)
+    end
+  end
+
+  defp move_last(%__MODULE__{} = set, name) do
+    if name in set.order do
+      %__MODULE__{set | order: List.delete(set.order, name) ++ [name]}
+    else
+      set
+    end
   end
 
   @doc """
@@ -91,12 +144,46 @@ defmodule Eva.Extension.Set do
   def put_tools(%__MODULE__{} = set, name, tools) do
     case Map.fetch(set.specs, name) do
       {:ok, %Spec{} = spec} ->
+        tools = Enum.map(tools, &bind_executor(&1, set, name))
         %__MODULE__{set | specs: Map.put(set.specs, name, %Spec{spec | tools: tools})}
 
       :error ->
         set
     end
   end
+
+  # A tool with no executor came from another node, which kept the closure because a
+  # closure cannot be called where its module is absent. What arrives is a description;
+  # this gives it a body that calls home.
+  #
+  # The node comes from the member rather than from a pid: an extension with no processes
+  # is still allowed to have tools, and it has no pid to ask.
+  defp bind_executor(%Tools.AgentTool{executor: nil} = tool, %__MODULE__{} = set, name) do
+    case Map.get(set.members, name) do
+      nil ->
+        tool
+
+      %{node: node} ->
+        %Tools.AgentTool{
+          tool
+          | executor: fn arguments, exec_context ->
+              # `exec_context` carries a pid for progress updates, and pids are
+              # location-transparent — `report_update/2` from the far side lands in the
+              # Loop process here with nothing extra to arrange.
+              case GenServer.call(
+                     {Eva.Extension.ToolRegistry, node},
+                     {:run, name, set.session_pid, tool.name, arguments, exec_context},
+                     :infinity
+                   ) do
+                {:ok, result} -> result
+                {:error, message} -> raise message
+              end
+            end
+        }
+    end
+  end
+
+  defp bind_executor(%Tools.AgentTool{} = tool, _set, _name), do: tool
 
   @spec guidelines(t()) :: [String.t()]
   def guidelines(%__MODULE__{} = set) do
@@ -129,19 +216,31 @@ defmodule Eva.Extension.Set do
   def list(%__MODULE__{} = set) do
     Enum.map(set.order, fn name ->
       spec = spec!(set, name)
-      loaded = Map.fetch!(set.loaded, name)
 
-      %{
+      set
+      |> origin(name)
+      |> Map.merge(%{
         name: name,
-        path: loaded.path,
-        module: loaded.module,
         running?: server(set, name) != nil,
         tool_count: length(spec.tools),
         commands: Enum.map(spec.commands, & &1.name),
         hooks: spec.hooks,
         event_classes: spec.event_classes
-      }
+      })
     end)
+  end
+
+  # Where the code is. A script has a file and a module here; an extension on another node
+  # has neither, and saying which node it is on is the useful answer instead.
+  defp origin(%__MODULE__{} = set, name) do
+    case Map.fetch(set.loaded, name) do
+      {:ok, loaded} ->
+        %{path: loaded.path, module: loaded.module, node: node()}
+
+      :error ->
+        member = Map.fetch!(set.members, name)
+        %{path: nil, module: nil, node: member.node}
+    end
   end
 
   @spec run_command(t(), String.t(), String.t()) :: term() | {:error, term()}
@@ -168,14 +267,25 @@ defmodule Eva.Extension.Set do
       set
       | order: List.delete(set.order, name),
         loaded: Map.delete(set.loaded, name),
-        specs: Map.delete(set.specs, name)
+        specs: Map.delete(set.specs, name),
+        remote: Map.delete(set.remote, name),
+        members: Map.delete(set.members, name)
     }
   end
 
   def drop(%__MODULE__{} = set, pid, reason) when is_pid(pid) do
+    # `Registry.keys/2` only knows local processes, so a remote pid — a node that died, an
+    # extension that crashed over there — has to be found by looking.
     case Registry.keys(Processes, pid) do
       [{_session_pid, name} | _] -> drop(set, name, reason)
-      [] -> set
+      [] -> drop_remote(set, pid, reason)
+    end
+  end
+
+  defp drop_remote(%__MODULE__{} = set, pid, reason) do
+    case Enum.find(set.remote, fn {_name, remote_pid} -> remote_pid == pid end) do
+      {name, _pid} -> drop(set, name, reason)
+      nil -> set
     end
   end
 
@@ -185,13 +295,29 @@ defmodule Eva.Extension.Set do
     :ok
   end
 
+  @doc """
+  Approves every extension directory this load skipped.
+
+  Returns the directories that were approved; the caller reloads to bring them up. An
+  empty list means there was nothing waiting.
+  """
+  @spec trust_all(t()) :: {:ok, [String.t()]} | {:error, term()}
+  def trust_all(%__MODULE__{resources: resources, blocked_dirs: dirs}) do
+    Enum.reduce_while(dirs, {:ok, []}, fn dir, {:ok, approved} ->
+      case Trust.trust(resources, dir) do
+        :ok -> {:cont, {:ok, approved ++ [dir]}}
+        {:error, reason} -> {:halt, {:error, {dir, reason}}}
+      end
+    end)
+  end
+
   # -- Private --
 
   # No recorded choice means enabled.
   defp enabled?(overrides, name), do: Map.get(overrides, name, true)
 
   defp enable_from_disk(%__MODULE__{} = set, name, opts) do
-    all_candidates = Loader.candidates(set.resources, Map.get(opts, :extra_paths, []))
+    {all_candidates, _blocked} = Loader.candidates(set.resources, Map.get(opts, :extra_paths, []))
 
     case Enum.filter(all_candidates, fn {candidate, _path} -> candidate == name end) do
       [] ->
@@ -238,6 +364,45 @@ defmodule Eva.Extension.Set do
     else
       {:error, reason} -> add_diagnostic(set, "#{ext.name}: #{reason}")
     end
+  end
+
+  # A name found on disk wins: a file in the repository you are working in is more specific
+  # than an extension installed once and running for every session.
+  defp add_announced(%__MODULE__{} = set, session_pid, opts) do
+    :extension
+    |> Cluster.members()
+    |> Enum.filter(&(enabled?(set.overrides, &1.name) and &1.name not in set.order))
+    |> Enum.reduce(set, &add_remote(&2, &1, session_pid, opts))
+  end
+
+  # `setup/1` and `init/1` run on the extension's node, with this session's context — the
+  # host never loads the module and could not call them if it wanted to.
+  defp add_remote(%__MODULE__{} = set, member, session_pid, opts) do
+    context = build_remote_context(member, session_pid, opts)
+
+    case instantiate(member, context) do
+      {:ok, pid, %Spec{} = spec} ->
+        # Nothing unregisters a remote pid for us: the local `Processes` registry never
+        # knew about it. The session monitors instead, and drops the extension on `:DOWN`.
+        if is_pid(pid), do: Process.monitor(pid)
+
+        accept_remote(set, member, pid, spec)
+
+      {:error, reason} ->
+        add_diagnostic(set, "#{member.name} on #{member.node}: #{reason}")
+    end
+  end
+
+  defp instantiate(member, context) do
+    case GenServer.call(member.pid, {:instantiate, context, member.generation}, @remote_timeout) do
+      {:ok, pid, %Spec{} = spec} -> {:ok, pid, spec}
+      {:error, reason} -> {:error, inspect(reason)}
+      other -> {:error, "instantiate returned #{inspect(other)}"}
+    end
+  catch
+    # The node went away between announcing and being asked. Its `:DOWN` is already on its
+    # way to the directory; this session just does without it.
+    :exit, reason -> {:error, "unreachable: #{inspect(reason)}"}
   end
 
   defp build_context(%Loaded{} = ext, session_pid, opts) do
@@ -287,6 +452,39 @@ defmodule Eva.Extension.Set do
     }
   end
 
+  defp accept_remote(%__MODULE__{} = set, member, pid, %Spec{} = spec) do
+    remote = if is_pid(pid), do: Map.put(set.remote, member.name, pid), else: set.remote
+
+    set = %__MODULE__{
+      set
+      | order: [member.name | set.order],
+        members: Map.put(set.members, member.name, member),
+        specs: Map.put(set.specs, member.name, spec),
+        remote: remote
+    }
+
+    # The tools `setup/1` returned arrived stripped, exactly like the ones a later
+    # `update_tools/2` will send, so they need the same proxies binding to them.
+    put_tools(set, member.name, spec.tools)
+  end
+
+  defp build_remote_context(member, session_pid, opts) do
+    %Context{
+      name: member.name,
+      cwd: Map.get(opts, :cwd),
+      model: Map.get(opts, :model),
+      provider_config: Map.get(opts, :provider_config),
+      session_pid: session_pid,
+      # There is no directory here to point at — the code lives on the other node.
+      extension_dir: nil,
+      entries: opts |> Map.get(:extension_entries, %{}) |> Map.get(member.name, []),
+      # Not the host implementation the in-VM extensions get: that module's functions run
+      # where they are called, and this extension is somewhere else. The remote one has the
+      # same shape and forwards.
+      capabilities: Map.get(opts, :remote_capabilities, Eva.Extension.Capabilities.Remote)
+    }
+  end
+
   defp add_diagnostic(%__MODULE__{} = set, message) do
     %__MODULE__{set | diagnostics: set.diagnostics ++ [message]}
   end
@@ -331,9 +529,14 @@ defmodule Eva.Extension.Set do
 
   # Registry unregisters on process death, so a dead extension reads as nil
   # immediately rather than after the session has handled its `:DOWN`.
-  defp server(%__MODULE__{session_pid: session_pid}, name) do
+  #
+  # A remote extension is never in that registry: the registry exists on its node too, but
+  # they are separate tables, so a remote pid would never be found there however long you
+  # looked. `remote` is the answer for those, and the session's `:DOWN` handling is what
+  # keeps it honest.
+  defp server(%__MODULE__{session_pid: session_pid} = set, name) do
     case Registry.whereis_name({Processes, {session_pid, name}}) do
-      :undefined -> nil
+      :undefined -> Map.get(set.remote, name)
       pid -> pid
     end
   end

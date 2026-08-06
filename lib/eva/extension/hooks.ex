@@ -48,6 +48,40 @@ defmodule Eva.Extension.Hooks do
   end
 
   @doc """
+  Builds the function the loop calls before each request to the model.
+
+  Every extension runs, each transforming what the previous one produced, like
+  `:tool_result`. An extension returns `{:ok, messages}` to change the list;
+  anything else leaves it as it was.
+
+  **A failure here is neutral, not fatal.** A crashed or slow `:context` hook passes
+  the messages through untouched — unlike `:tool_call`, where an unreachable
+  extension blocks the tool. Injecting context is additive, so a memory plugin
+  having a bad day must never be able to stop a turn.
+
+  The result is *not* persisted. It shapes what the provider sees for one request;
+  the transcript keeps the real messages, so injected context is recomputed each
+  time rather than accumulating.
+  """
+  @spec context_fun(targets()) :: ([term()] -> [term()])
+  def context_fun(targets) do
+    case Map.get(targets, :context, []) do
+      [] ->
+        fn messages -> messages end
+
+      listeners ->
+        fn messages ->
+          Enum.reduce(listeners, messages, fn {_name, pid}, current ->
+            case safe_call(pid, {:hook, :context, current}) do
+              {:ok, new_messages} when is_list(new_messages) -> new_messages
+              _ -> current
+            end
+          end)
+        end
+    end
+  end
+
+  @doc """
   Runs user input through every extension that registered `:input`.
 
   `{:transform, text}` feeds forward to the next extension; the first

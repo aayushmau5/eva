@@ -12,9 +12,23 @@ defmodule Eva.Test.MockProvider do
     GenServer.start_link(__MODULE__, turns)
   end
 
+  @doc """
+  Every request this provider was asked to stream, oldest first.
+
+  One entry per provider call, not per turn — a turn with tool calls makes several.
+  Lets a test assert on what the model actually saw, as opposed to what the
+  transcript holds.
+  """
+  def get_requests(pid), do: GenServer.call(pid, :get_requests)
+
   @impl true
   def init(turns) do
-    {:ok, %{turns: turns, current: 0}}
+    {:ok, %{turns: turns, current: 0, requests: []}}
+  end
+
+  @impl true
+  def handle_call(:get_requests, _from, state) do
+    {:reply, Enum.reverse(state.requests), state}
   end
 
   @impl true
@@ -28,6 +42,6 @@ defmodule Eva.Test.MockProvider do
       end)
     end)
 
-    {:noreply, %{state | current: state.current + 1}}
+    {:noreply, %{state | current: state.current + 1, requests: [opts | state.requests]}}
   end
 end

@@ -5,6 +5,20 @@ description: Write an Eva extension — an .exs file that adds tools, system-pro
 
 # Writing an Eva extension
 
+Two ways to ship one, and the difference is where it runs:
+
+| | | |
+|---|---|---|
+| **script** | one `.exs` file | Eva compiles it into its own VM at session start |
+| **project** | a Mix project | its own BEAM node, which announces itself to Eva |
+
+Everything below is about scripts, and **all of it applies unchanged to a project** — same
+`setup/1`, same callbacks, same `API`. A project only differs in packaging: it has its own
+`mix.exs` and its own dependencies, it starts `Eva.Extension.Node` from its application,
+and you start it yourself (`mix eva.ext.start <name>`, or `iex -S mix` while developing).
+Reach for one when the extension needs libraries of its own, or when one file has stopped
+being enough. See [extension-nodes.md](../../../docs/extension-nodes.md).
+
 An extension is one `.exs` file that Eva compiles into the running VM at session start.
 
 **Where it goes.** `~/.eva/extensions/<name>.exs` for every project, or
@@ -13,10 +27,23 @@ An extension is one `.exs` file that Eva compiles into the running VM at session
 extension's name** — that name appears in diagnostics, namespaces its stored data, and is
 how its own tools look up its process. A project file shadows a global one of the same name.
 
+**Project extensions need approving.** `~/.eva/extensions` loads automatically — the user
+put it there. `<project>/.eva/extensions` does not: it is code from whoever wrote the
+repository, running before the first prompt, so Eva skips the whole directory and says so
+until the user approves it (`Session.trust_extensions/1`). Approval covers the directory's
+contents as they were, so editing or adding an extension asks again. A path passed
+explicitly with `-e` is always loaded — naming it is the consent.
+
+**The module name follows the filename.** `notes.exs` must define
+`Eva.Extension.Notes`, and every other module in the file goes under it
+(`Eva.Extension.Notes.Client`). Module names are global on the BEAM, so this is what keeps
+two extensions from redefining each other's helpers; anything outside the namespace fails
+to compile, and a module under the wrong extension's namespace is refused at load.
+
 **The whole contract** is `setup/1` returning a `%Spec{}`:
 
 ```elixir
-defmodule Notes do
+defmodule Eva.Extension.Notes do
   use Eva.Extension
 
   @impl true

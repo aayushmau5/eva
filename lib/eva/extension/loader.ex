@@ -12,6 +12,7 @@ defmodule Eva.Extension.Loader do
   use TypedStruct
 
   alias Eva.Coding.Resources
+  alias Eva.Extension.Trust
 
   # Loaded modules are cached in persistent_term by this cache key.
   @cache_key {__MODULE__, :required_paths}
@@ -19,32 +20,51 @@ defmodule Eva.Extension.Loader do
   typedstruct module: Loaded do
     field :name, String.t()
     field :path, String.t()
+    # The module carrying `__eva_extension__` — the one whose callbacks get called.
     field :module, module()
+    # Every module the file brought in, including any it required itself. Purging
+    # only `module` leaves a split extension's siblings loaded at their old version.
+    field :modules, [module()], default: []
+    # Every file this load required, `path` included.
+    field :files, [String.t()], default: []
   end
 
   @doc """
-  Discovers extension files.
+  Every script to load, and the directories that were skipped for want of consent.
+
+  Scripts only. A project extension runs on its own node and announces itself — Eva never
+  loads one, so nothing about it reaches this module; see `Eva.Cluster`.
+
+  A project's `.eva/extensions` is code from whoever wrote the repository and it runs
+  before the first prompt, so it contributes nothing until `Trust.trust/2` has been called
+  for it. The global directory and any explicit `extra_paths` are provided by the user.
   """
-  @spec candidates(Resources.t(), [String.t()]) :: [{name :: String.t(), path :: String.t()}]
+  @spec candidates(Resources.t(), [String.t()]) ::
+          {[{name :: String.t(), path :: String.t()}], blocked :: [String.t()]}
   def candidates(%Resources{} = resources, extra_paths \\ []) do
-    dir_candidates =
+    global = Path.expand(Path.join(resources.root, "extensions"))
+
+    {allowed, blocked} =
       resources
       |> Resources.extensions_dir()
-      |> Enum.flat_map(&candidates_in_dir/1)
+      |> Enum.split_with(fn dir ->
+        dir == global or not File.dir?(dir) or Trust.trusted?(resources, dir)
+      end)
+
+    dir_candidates = Enum.flat_map(allowed, &candidates_in_dir/1)
 
     extra_candidates =
       extra_paths
       |> Enum.map(&candidate_from_path/1)
       |> Enum.reject(&is_nil/1)
 
-    (dir_candidates ++ extra_candidates)
-    |> dedup_by_name()
+    {dedup_by_name(dir_candidates ++ extra_candidates), blocked}
   end
 
   @doc """
   Loads the extension into the VM.
   """
-  @spec discover([{String.t(), String.t()}]) :: {[Loaded.t()], [String.t()]}
+  @spec load([{String.t(), String.t()}]) :: {[Loaded.t()], [String.t()]}
   def load(candidates) do
     candidates
     |> Enum.reduce({[], [], MapSet.new()}, &load_into_acc/2)
@@ -55,11 +75,23 @@ defmodule Eva.Extension.Loader do
 
   @doc """
   Finds and loads every extension reachable from `resources`, plus any `extra_paths`.
-  Returns `{loaded, diagnostics}`.
+  Returns `{loaded, diagnostics}`, with a diagnostic for each directory skipped for want
+  of consent.
   """
   @spec discover(Resources.t(), [String.t()]) :: {[Loaded.t()], [String.t()]}
   def discover(%Resources{} = resources, extra_paths \\ []) do
-    resources |> candidates(extra_paths) |> load()
+    {candidates, blocked} = candidates(resources, extra_paths)
+    {loaded, diagnostics} = load(candidates)
+    {loaded, Enum.map(blocked, &untrusted_diagnostic/1) ++ diagnostics}
+  end
+
+  @doc """
+  The notice shown for a directory that has not been approved.
+  """
+  @spec untrusted_diagnostic(String.t()) :: String.t()
+  def untrusted_diagnostic(dir) do
+    "#{dir} has extensions that have not been approved, so none of them are loaded. " <>
+      "Run /trust-extensions to review and enable them."
   end
 
   @doc """
@@ -67,17 +99,24 @@ defmodule Eva.Extension.Loader do
 
   Stop the extension processes first — `:code.purge/1` kills anything still running
   the old code.
+
+  Every module the file defined is purged, not just the one with the marker: a script
+  that requires a sibling would otherwise keep that sibling at its old version after a
+  reload, with no error to say so.
   """
   @spec purge([Loaded.t()]) :: :ok
   def purge(loaded) do
-    loaded |> Enum.map(& &1.path) |> Code.unrequire_files()
+    loaded |> Enum.flat_map(& &1.files) |> Code.unrequire_files()
 
-    Enum.each(loaded, fn %Loaded{module: module, path: path} ->
-      # `delete` only moves the current version to "old"; the second purge removes it.
-      # Without it the next require warns about redefining, which fails precommit.
-      :code.purge(module)
-      :code.delete(module)
-      :code.purge(module)
+    Enum.each(loaded, fn %Loaded{modules: modules, path: path} ->
+      Enum.each(modules, fn module ->
+        # `delete` only moves the current version to "old"; the second purge removes it.
+        # Without it the next require warns about redefining, which fails precommit.
+        :code.purge(module)
+        :code.delete(module)
+        :code.purge(module)
+      end)
+
       drop_cached(path)
     end)
 
@@ -92,7 +131,9 @@ defmodule Eva.Extension.Loader do
         # Module names are global, so two files defining `Guard` would redefine
         # each other. Keep the first.
         if MapSet.member?(seen_modules, module) do
-          reason = "#{path} defines #{inspect(module)}, already claimed by another extension"
+          reason =
+            "#{extension.path} defines #{inspect(module)}, already claimed by another extension"
+
           {loaded, [reason | diagnostics], seen_modules}
         else
           {[extension | loaded], diagnostics, MapSet.put(seen_modules, module)}
@@ -104,10 +145,10 @@ defmodule Eva.Extension.Loader do
   end
 
   defp load_one(name, path) do
-    with {:ok, modules} <- require_modules(path),
+    with {:ok, %{modules: modules, files: files}} <- require_modules(path),
          {:ok, module} <- extension_module(modules, path),
-         :ok <- validate(module, path) do
-      {:ok, %Loaded{name: name, path: path, module: module}}
+         :ok <- validate(module, name, path) do
+      {:ok, %Loaded{name: name, path: path, module: module, modules: modules, files: files}}
     end
   end
 
@@ -162,22 +203,50 @@ defmodule Eva.Extension.Loader do
   end
 
   defp require_modules(path) do
+    required_before = MapSet.new(Code.required_files())
+
     case Code.require_file(path) do
       nil ->
         case Map.fetch(required_cache(), path) do
-          {:ok, modules} -> {:ok, modules}
+          {:ok, entry} -> {:ok, entry}
           :error -> {:error, "#{path} was already required but is missing from the loader cache"}
         end
 
       results when is_list(results) ->
-        modules = Enum.map(results, fn {module, _binary} -> module end)
-        cache_modules(path, modules)
-        {:ok, modules}
+        files = Enum.reject(Code.required_files(), &MapSet.member?(required_before, &1))
+        entry = %{modules: loaded_modules(results, files), files: files}
+        cache_modules(path, entry)
+        {:ok, entry}
     end
   rescue
     e -> {:error, "#{path} failed to compile: #{Exception.message(e)}"}
   catch
     kind, reason -> {:error, "#{path} failed to load: #{Exception.format(kind, reason)}"}
+  end
+
+  # `Code.require_file/1` reports only the modules the file defined itself — a sibling
+  # it required in turn is invisible there, and would survive a reload at its old
+  # version. Compile metadata records the source path, so the code server can say which
+  # loaded modules came from the files this load pulled in.
+  defp loaded_modules(results, files) do
+    direct = Enum.map(results, fn {module, _binary} -> module end)
+    sources = MapSet.new(files, &String.to_charlist/1)
+
+    siblings =
+      for {module, _location} <- :code.all_loaded(),
+          module not in direct,
+          source = compile_source(module),
+          MapSet.member?(sources, source),
+          do: module
+
+    direct ++ siblings
+  end
+
+  defp compile_source(module) do
+    module.module_info(:compile)[:source]
+  rescue
+    # Purged between `all_loaded/0` and here, or compiled without the chunk.
+    _ -> nil
   end
 
   # Picked by the marker `use Eva.Extension` injects.
@@ -200,11 +269,28 @@ defmodule Eva.Extension.Loader do
   end
 
   # A missing `setup/1` is only a compile warning from `@behaviour`, so check here.
-  defp validate(module, path) do
-    if function_exported?(module, :setup, 1) do
-      :ok
-    else
-      {:error, "#{inspect(module)} in #{path} does not export setup/1"}
+  #
+  # `use Eva.Extension` already refuses a module outside `Eva.Extension.*`; this pins
+  # it to *this* extension's own subtree, so `mcp` cannot define `Eva.Extension.Memory`
+  # and quietly take a name that belongs to something else.
+  defp validate(module, name, path) do
+    expected = Eva.Extension.namespace(name)
+
+    # Case-insensitively, so an extension named `mcp` can call itself `Eva.Extension.MCP`
+    # rather than `Eva.Extension.Mcp`.
+    actual = module |> Atom.to_string() |> String.downcase()
+    prefix = expected |> Atom.to_string() |> String.downcase()
+
+    cond do
+      not function_exported?(module, :setup, 1) ->
+        {:error, "#{inspect(module)} in #{path} does not export setup/1"}
+
+      actual != prefix and not String.starts_with?(actual, prefix <> ".") ->
+        {:error,
+         "#{path}: extension #{name} must define #{inspect(expected)}, got #{inspect(module)}"}
+
+      true ->
+        :ok
     end
   end
 

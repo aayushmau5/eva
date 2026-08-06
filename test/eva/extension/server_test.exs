@@ -160,7 +160,15 @@ defmodule Eva.Extension.ServerTest do
   alias Eva.Agent.Events, as: AgentEvents
 
   setup do
-    Eva.Extension.ServerTest.StateHolder.start_link()
+    # The holder is linked to the test process, so the previous test's copy can still be
+    # shutting down when the next one starts — `start_link/0` then quietly hands back a
+    # dying pid and the following `put/1` exits with `:noproc`. Supervising it makes the
+    # teardown happen before the next test begins.
+    start_supervised!(%{
+      id: Eva.Extension.ServerTest.StateHolder,
+      start: {Eva.Extension.ServerTest.StateHolder, :start_link, []}
+    })
+
     :ok
   end
 

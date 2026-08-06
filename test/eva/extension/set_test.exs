@@ -18,12 +18,13 @@ defmodule Eva.Extension.SetTest do
     path
   end
 
-  defp tools_only_extension(tool_name) do
-    mod_name = tool_name |> String.capitalize()
-    uid = System.unique_integer([:positive])
+  # An extension's module has to match its name, so the file, the name Set knows it by,
+  # and the module all derive from one string.
+  defp module_for(name), do: Eva.Extension.namespace(name)
 
+  defp tools_only_extension(name, tool_name) do
     ~s'''
-    defmodule ToolExt#{mod_name}_#{uid} do
+    defmodule #{inspect(module_for(name))} do
       use Eva.Extension
 
       def setup(_ctx) do
@@ -46,38 +47,9 @@ defmodule Eva.Extension.SetTest do
     '''
   end
 
-  defp tool_ext_with_name(module_suffix, tool_name) do
-    uid = System.unique_integer([:positive])
-
+  defp guideline_extension(name) do
     ~s'''
-    defmodule ToolExt#{module_suffix}_#{uid} do
-      use Eva.Extension
-
-      def setup(_ctx) do
-        {:ok, %Eva.Extension.Spec{
-          tools: [
-            %Eva.Agent.Tools.AgentTool{
-              name: "#{tool_name}",
-              description: "A test tool",
-              input_schema: %{type: "object", properties: %{}},
-              executor: fn _args, _ctx ->
-                %Eva.Agent.Tools.AgentToolResult{
-                  content: [%Eva.Agent.Messages.TextContent{text: "result"}]
-                }
-              end
-            }
-          ]
-        }}
-      end
-    end
-    '''
-  end
-
-  defp guideline_extension do
-    uid = System.unique_integer([:positive])
-
-    ~s'''
-    defmodule GuideExt_#{uid} do
+    defmodule #{inspect(module_for(name))} do
       use Eva.Extension
 
       def setup(_ctx) do
@@ -89,11 +61,9 @@ defmodule Eva.Extension.SetTest do
     '''
   end
 
-  defp stateful_extension do
-    uid = System.unique_integer([:positive])
-
+  defp stateful_extension(name) do
     ~s'''
-    defmodule StatefulExt_#{uid} do
+    defmodule #{inspect(module_for(name))} do
       use Eva.Extension
 
       def setup(_ctx) do
@@ -115,11 +85,9 @@ defmodule Eva.Extension.SetTest do
     '''
   end
 
-  defp command_extension do
-    uid = System.unique_integer([:positive])
-
+  defp command_extension(name) do
     ~s'''
-    defmodule CommandExt_#{uid} do
+    defmodule #{inspect(module_for(name))} do
       use Eva.Extension
 
       def setup(_ctx) do
@@ -158,7 +126,7 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "tool_ext.exs", tools_only_extension("my_tool"))
+      write_extension(ext_dir, "tool_ext.exs", tools_only_extension("tool_ext", "my_tool"))
 
       resources = %Resources{root: tmp}
       set = Set.load(resources, self())
@@ -172,8 +140,8 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "first.exs", tools_only_extension("tool_a"))
-      write_extension(ext_dir, "second.exs", tools_only_extension("tool_b"))
+      write_extension(ext_dir, "first.exs", tools_only_extension("first", "tool_a"))
+      write_extension(ext_dir, "second.exs", tools_only_extension("second", "tool_b"))
 
       resources = %Resources{root: tmp}
       set = Set.load(resources, self())
@@ -188,8 +156,8 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "keep.exs", tools_only_extension("keeper"))
-      write_extension(ext_dir, "skip.exs", tools_only_extension("skipped"))
+      write_extension(ext_dir, "keep.exs", tools_only_extension("keep", "keeper"))
+      write_extension(ext_dir, "skip.exs", tools_only_extension("skip", "skipped"))
 
       resources = %Resources{root: tmp}
 
@@ -204,7 +172,7 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "guide.exs", guideline_extension())
+      write_extension(ext_dir, "guide.exs", guideline_extension("guide"))
 
       resources = %Resources{root: tmp}
       set = Set.load(resources, self())
@@ -218,7 +186,7 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "stateful.exs", stateful_extension())
+      write_extension(ext_dir, "stateful.exs", stateful_extension("stateful"))
 
       resources = %Resources{root: tmp}
       set = Set.load(resources, self())
@@ -234,7 +202,7 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "cmd.ext.exs", command_extension())
+      write_extension(ext_dir, "cmd_dispatch.exs", command_extension("cmd_dispatch"))
 
       resources = %Resources{root: tmp}
       set = Set.load(resources, self())
@@ -247,7 +215,7 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "cmd.ext.exs", command_extension())
+      write_extension(ext_dir, "cmd_unknown.exs", command_extension("cmd_unknown"))
 
       resources = %Resources{root: tmp}
       set = Set.load(resources, self())
@@ -259,7 +227,7 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "cmd.ext.exs", command_extension())
+      write_extension(ext_dir, "cmd_stopped.exs", command_extension("cmd_stopped"))
 
       resources = %Resources{root: tmp}
       set = Set.load(resources, self())
@@ -273,7 +241,7 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "ext.exs", tools_only_extension("read_file"))
+      write_extension(ext_dir, "ext.exs", tools_only_extension("ext", "read_file"))
 
       resources = %Resources{root: tmp}
 
@@ -288,8 +256,8 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "ext_a.exs", tool_ext_with_name("Aa", "shared_tool"))
-      write_extension(ext_dir, "ext_b.exs", tool_ext_with_name("Bb", "shared_tool"))
+      write_extension(ext_dir, "ext_a.exs", tools_only_extension("ext_a", "shared_tool"))
+      write_extension(ext_dir, "ext_b.exs", tools_only_extension("ext_b", "shared_tool"))
 
       resources = %Resources{root: tmp}
       set = Set.load(resources, self())
@@ -309,7 +277,7 @@ defmodule Eva.Extension.SetTest do
 
       # Both register the same command name
       write_extension(ext_dir, "first_cmd.exs", ~s'''
-      defmodule FirstCmdExt do
+      defmodule Eva.Extension.FirstCmd do
         use Eva.Extension
         def setup(_ctx) do
           {:ok, %Eva.Extension.Spec{
@@ -322,7 +290,7 @@ defmodule Eva.Extension.SetTest do
       ''')
 
       write_extension(ext_dir, "second_cmd.exs", ~s'''
-      defmodule SecondCmdExt do
+      defmodule Eva.Extension.SecondCmd do
         use Eva.Extension
         def setup(_ctx) do
           {:ok, %Eva.Extension.Spec{
@@ -348,7 +316,7 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "removable.exs", guideline_extension())
+      write_extension(ext_dir, "removable.exs", guideline_extension("removable"))
 
       resources = %Resources{root: tmp}
       set = Set.load(resources, self())
@@ -364,7 +332,7 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "togglable.exs", guideline_extension())
+      write_extension(ext_dir, "togglable.exs", guideline_extension("togglable"))
 
       resources = %Resources{root: tmp}
       set = Set.load(resources, self())
@@ -393,7 +361,7 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "dropped.exs", guideline_extension())
+      write_extension(ext_dir, "dropped.exs", guideline_extension("dropped"))
 
       resources = %Resources{root: tmp}
       set = Set.load(resources, self())
@@ -417,7 +385,7 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "runner.exs", stateful_extension())
+      write_extension(ext_dir, "runner.exs", stateful_extension("runner"))
 
       resources = %Resources{root: tmp}
       set = Set.load(resources, self())
@@ -437,7 +405,7 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "hooker.exs", stateful_extension())
+      write_extension(ext_dir, "hooker.exs", stateful_extension("hooker"))
 
       resources = %Resources{root: tmp}
       set = Set.load(resources, self())
@@ -457,7 +425,7 @@ defmodule Eva.Extension.SetTest do
       tmp = tmp_dir()
       ext_dir = Path.join(tmp, "extensions")
       File.mkdir_p!(ext_dir)
-      write_extension(ext_dir, "meta.exs", stateful_extension())
+      write_extension(ext_dir, "meta.exs", stateful_extension("meta"))
 
       resources = %Resources{root: tmp}
       set = Set.load(resources, self())
@@ -466,7 +434,7 @@ defmodule Eva.Extension.SetTest do
       assert info.name == "meta"
       assert is_binary(info.path)
       assert is_atom(info.module)
-      assert info.module |> Atom.to_string() |> String.contains?("StatefulExt")
+      assert info.module == module_for("meta")
       assert info.running? == true
       assert info.tool_count == 0
       assert info.commands == ["ping"]
