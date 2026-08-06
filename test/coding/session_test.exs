@@ -38,6 +38,50 @@ defmodule RunBashHarness do
   def handle_call(:get_state, _from, state), do: {:reply, state, state}
 end
 
+defmodule CommandExtension do
+  @moduledoc """
+  Stands in for an extension's `Eva.Extension.Server`, answering every command the same way.
+
+  Registers itself under the session's key in `Eva.Extension.Processes`, because that registry
+  is how `Eva.Extension.Set` finds an extension's process — a pid handed over any other way
+  would never be looked up.
+  """
+  use GenServer
+
+  def start_link(session_pid, name, reply) do
+    GenServer.start_link(__MODULE__, {session_pid, name, reply})
+  end
+
+  @impl true
+  def init({session_pid, name, reply}) do
+    {:ok, _} = Registry.register(Eva.Extension.Processes, {session_pid, name}, nil)
+    {:ok, reply}
+  end
+
+  @impl true
+  def handle_call({:command, _name, _args}, _from, reply), do: {:reply, reply, reply}
+end
+
+defmodule RemoteExtension do
+  @moduledoc """
+  Stands in for an `Eva.Extension.Node` on another VM: it answers `:instantiate` with a spec,
+  which is all `Eva.Extension.Set.add_member/4` asks of it.
+  """
+  use GenServer
+
+  alias Eva.Extension.Spec
+
+  def start_link, do: GenServer.start_link(__MODULE__, :ok)
+
+  @impl true
+  def init(:ok), do: {:ok, :ok}
+
+  @impl true
+  def handle_call({:instantiate, _context, _generation}, _from, state) do
+    {:reply, {:ok, self(), %Spec{guidelines: ["from another node"]}}, state}
+  end
+end
+
 defmodule Eva.Coding.SessionTest do
   use ExUnit.Case, async: false
 
@@ -998,6 +1042,147 @@ defmodule Eva.Coding.SessionTest do
       {:reply, {:ok, []}, unchanged} = Session.handle_call(:trust_extensions, nil, state)
 
       assert unchanged == state
+    end
+  end
+
+  # Nothing else tells a frontend the set changed. Toggles and reloads are calls and could have
+  # answered their caller, but a node joining has no caller — and a frontend cannot watch
+  # `Eva.Cluster` itself without racing this session's handling of the same message.
+  describe "extensions changed" do
+    test "a toggle publishes it" do
+      {:ok, harness} = RunBashHarness.start_link(false)
+      config = build_session_config(listener_pid: self())
+      state = build_state(config: config, harness_pid: harness)
+
+      {:reply, {:ok, _list}, _} =
+        Session.handle_call({:set_extension_enabled, "ext1", false}, nil, state)
+
+      assert_receive %AgentEvents.ExtensionsChanged{}
+    end
+
+    test "an extension announcing from another node publishes it" do
+      {:ok, harness} = RunBashHarness.start_link(false)
+      config = build_session_config(listener_pid: self())
+      state = build_state(config: config, harness_pid: harness)
+
+      {:ok, remote} = RemoteExtension.start_link()
+      member = %{role: :extension, name: "fixture", node: node(), pid: remote, generation: 1}
+
+      {:noreply, state} = Session.handle_info({:cluster_member_up, member}, state)
+
+      assert state.extensions.order == ["fixture"]
+      assert_receive %AgentEvents.ExtensionsChanged{}
+    end
+
+    test "an extension's node going away publishes it" do
+      {:ok, harness} = RunBashHarness.start_link(false)
+      config = build_session_config(listener_pid: self())
+
+      extensions = %Eva.Extension.Set{
+        session_pid: self(),
+        order: ["fixture"],
+        specs: %{"fixture" => %Eva.Extension.Spec{}},
+        members: %{"fixture" => %{name: "fixture", node: node()}}
+      }
+
+      state = build_state(config: config, harness_pid: harness, extensions: extensions)
+      member = %{role: :extension, name: "fixture", node: node()}
+
+      {:noreply, state} = Session.handle_info({:cluster_member_down, member}, state)
+
+      assert state.extensions.order == []
+      assert_receive %AgentEvents.ExtensionsChanged{}
+    end
+
+    # The `:DOWN` for a remote pid nobody in this set owns. Dropping nothing must publish
+    # nothing, or a frontend re-reads on every unrelated monitor that fires.
+    test "a death that changes nothing publishes nothing" do
+      config = build_session_config(listener_pid: self())
+      state = build_state(config: config, extensions: %Eva.Extension.Set{session_pid: self()})
+
+      {:noreply, ^state} =
+        Session.handle_info({:DOWN, make_ref(), :process, spawn(fn -> :ok end), :normal}, state)
+
+      refute_receive %AgentEvents.ExtensionsChanged{}, 50
+    end
+  end
+
+  # What a command answers with reaches the user's screen, so the shapes an extension actually
+  # returns have to be the shapes that get unwrapped. `{:text, _}` is what `Eva.Extension.MCP`
+  # and the test fixture both use; without a clause for it `/mcp` reads as a raw tuple.
+  describe "extension command replies" do
+    test "a string is shown as it is" do
+      state = command_state("checked lib/")
+
+      {:reply, :ok, _} = Session.handle_call({:prompt, "/cmd lib/", nil}, nil, state)
+
+      assert_receive %AgentEvents.MessageEnd{
+        message: %Messages.CustomMessage{
+          custom_type: "extension_command",
+          content: "checked lib/"
+        }
+      }
+    end
+
+    test "{:text, string} is unwrapped rather than inspected" do
+      state = command_state({:text, "github  connected  12 tools"})
+
+      {:reply, :ok, _} = Session.handle_call({:prompt, "/cmd", nil}, nil, state)
+
+      assert_receive %AgentEvents.MessageEnd{
+        message: %Messages.CustomMessage{content: content}
+      }
+
+      assert content == "github  connected  12 tools"
+    end
+
+    # The `handle_command/3` that `use Eva.Extension` injects answers with exactly this, so it is
+    # what a command declared in `setup/1` but never implemented shows the user.
+    test "an error reads as a sentence" do
+      state = command_state({:error, :not_implemented})
+
+      {:reply, :ok, _} = Session.handle_call({:prompt, "/cmd", nil}, nil, state)
+
+      assert_receive %AgentEvents.MessageEnd{message: %Messages.CustomMessage{content: content}}
+      assert content == "error: :not_implemented"
+    end
+
+    test "an error that is already a sentence is not quoted" do
+      state = command_state({:error, "no MCP server named exa"})
+
+      {:reply, :ok, _} = Session.handle_call({:prompt, "/cmd", nil}, nil, state)
+
+      assert_receive %AgentEvents.MessageEnd{message: %Messages.CustomMessage{content: content}}
+      assert content == "error: no MCP server named exa"
+    end
+
+    # Better a visible term than a swallowed one: the author can see what they returned.
+    test "anything else is inspected" do
+      state = command_state(%{count: 1})
+
+      {:reply, :ok, _} = Session.handle_call({:prompt, "/cmd", nil}, nil, state)
+
+      assert_receive %AgentEvents.MessageEnd{message: %Messages.CustomMessage{content: content}}
+      assert content == "%{count: 1}"
+    end
+
+    # A set with one extension that answers every command with `reply`. Registering in
+    # `Processes` under this session's key is what `Eva.Extension.Set` looks the process up by.
+    defp command_state(reply) do
+      config = build_session_config(listener_pid: self())
+      {:ok, _pid} = CommandExtension.start_link(self(), "ext1", reply)
+
+      extensions = %Eva.Extension.Set{
+        session_pid: self(),
+        order: ["ext1"],
+        specs: %{
+          "ext1" => %Eva.Extension.Spec{
+            commands: [%Eva.Extension.Spec.Command{name: "cmd", description: "a command"}]
+          }
+        }
+      }
+
+      build_state(config: config, extensions: extensions)
     end
   end
 
