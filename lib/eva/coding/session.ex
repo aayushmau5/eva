@@ -900,6 +900,8 @@ defmodule Eva.Coding.Session do
   # purpose — `refresh_tools/1` already runs at every prompt, so they pick themselves up.
   # Both of these only take effect on the next run, since `Loop` freezes its context when
   # it spawns; callers refuse to run while the agent is.
+  # Every path that changes the set ends up here — a toggle, a reload, a node joining or
+  # leaving — so this is also where listeners are told.
   defp rebind_extensions(%__MODULE__{} = state) do
     resources = load_resources(session_resources(state.config), state.config.context_files)
 
@@ -918,6 +920,8 @@ defmodule Eva.Coding.Session do
         ExtensionHooks.after_tool_call_fun(hook_targets),
         ExtensionHooks.context_fun(hook_targets)
       )
+
+    forward_event(state, %AgentEvents.ExtensionsChanged{})
 
     state
   end
@@ -985,6 +989,15 @@ defmodule Eva.Coding.Session do
   end
 
   # Shown to the user, never persisted — these are not part of the model's conversation.
+  defp announce({:text, text}, %__MODULE__{} = state, custom_type) when is_binary(text) do
+    announce(text, state, custom_type)
+  end
+
+  defp announce({:error, reason}, %__MODULE__{} = state, custom_type) do
+    detail = if is_binary(reason), do: reason, else: inspect(reason)
+    announce("error: " <> detail, state, custom_type)
+  end
+
   defp announce(result, %__MODULE__{} = state, custom_type) do
     text = if is_binary(result), do: result, else: inspect(result)
     message = %Messages.CustomMessage{custom_type: custom_type, content: text}

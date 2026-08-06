@@ -47,12 +47,20 @@ defmodule Eva.Extension do
               {:ok, state :: term()}
   @callback handle_hook(hook :: atom(), payload :: term(), state :: term()) ::
               {result :: term(), state :: term()}
+  @typedoc """
+  What a command answers the user with.
+
+  The host understands these three and shows the text; any other term reaches the screen
+  `inspect`ed, which is how a return you didn't mean announces itself.
+  """
+  @type command_reply :: String.t() | {:text, String.t()} | {:error, term()}
+
   @callback handle_command(
               name :: String.t(),
               args :: String.t(),
               state :: term()
             ) ::
-              {reply :: term(), state :: term()}
+              {command_reply() | term(), state :: term()}
 
   @callback handle_request(request :: term(), state :: term()) ::
               {reply :: term(), state :: term()}

@@ -115,6 +115,10 @@ defmodule Eva.Bus do
   # `extension` and reads `payload`, so core never needs a class per extension.
   defp classify(%AgentEvents.ExtensionEvent{}), do: :extension
 
+  # Not something an extension published, but the audience is the same one: whoever is
+  # watching extensions is who needs to know the set of them changed.
+  defp classify(%AgentEvents.ExtensionsChanged{}), do: :extension
+
   defp classify(%{__struct__: module}) when is_atom(module) do
     Map.get(host_events(), module, :lifecycle)
   end

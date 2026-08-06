@@ -88,6 +88,14 @@ defmodule Eva.Agent.Events do
     field :payload, term()
   end
 
+  # The session's set of extensions is no longer what a listener last saw: one joined from
+  # another node or went away, one was switched on or off, or they were reloaded.
+  #
+  # Deliberately empty. A listener answers it by re-reading `list_extensions/1`.
+  typedstruct module: ExtensionsChanged do
+    field :type, String.t(), default: "extensions_changed"
+  end
+
   @doc """
   Every event module in this file.
   """
@@ -104,7 +112,8 @@ defmodule Eva.Agent.Events do
       ToolExecutionStart,
       ToolExecutionUpdate,
       ToolExecutionEnd,
-      ExtensionEvent
+      ExtensionEvent,
+      ExtensionsChanged
     ]
   end
 end

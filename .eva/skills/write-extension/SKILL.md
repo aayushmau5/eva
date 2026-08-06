@@ -210,8 +210,7 @@ Declare classes, implement `handle_event/2`.
 | `:lifecycle` | `AgentStart` `AgentEnd` `TurnStart` `TurnEnd` `MessageStart` `MessageEnd` |
 | `:tools` | `ToolExecutionStart` `ToolExecutionUpdate` `ToolExecutionEnd` |
 | `:stream` | `MessageUpdate` — **one per token**, only subscribe if you truly need it |
-| `:mcp` | MCP server connect/disconnect/tools-changed |
-| `:extension` | notices emitted by extensions |
+| `:extension` | `ExtensionEvent` — anything another extension published, MCP's server connect/disconnect among them — and `ExtensionsChanged` when the session's set of extensions changes |
 
 ```elixir
 @impl true
@@ -242,6 +241,10 @@ def handle_request(:bump, state), do: {state.count + 1, %{state | count: state.c
 
 `init/1` builds your state; every other callback receives and returns it. A command name
 already taken by another extension is dropped with a diagnostic.
+
+**What you reply with is shown to the user**, and three shapes are understood: `"text"`,
+`{:text, "text"}`, and `{:error, reason}`. Anything else is `inspect`ed onto their screen —
+which is the quickest way to spot a return you didn't mean.
 
 **When a tool needs your state**, look the process up — `setup/1` runs before it exists, so
 the executor can't capture the pid:
