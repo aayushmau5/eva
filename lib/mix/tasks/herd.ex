@@ -6,7 +6,7 @@ defmodule Mix.Tasks.Herd do
   use Mix.Task
 
   alias Eva.AI.Events, as: AIEvents
-  alias Eva.Agent.Events
+  alias Eva.Core.Agent.Events
   alias Eva.Agent.Session.Storage
 
   alias Eva.Coding.SessionIndexManager

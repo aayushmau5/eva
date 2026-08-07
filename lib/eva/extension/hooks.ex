@@ -8,7 +8,7 @@ defmodule Eva.Extension.Hooks do
   extension is.
   """
 
-  alias Eva.Agent.Tools
+  alias Eva.Core.Agent.Tools
 
   @timeout 5_000
 

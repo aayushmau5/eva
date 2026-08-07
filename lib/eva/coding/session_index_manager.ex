@@ -18,7 +18,7 @@ defmodule Eva.Coding.SessionIndexManager do
 
   alias Eva.Coding.Paths, as: EvaPaths
   alias Eva.Agent.Session.Entries.SessionIndexEntry
-  alias Eva.Agent.Utils
+  alias Eva.Core.Agent.Utils
 
   typedstruct do
     field :paths, EvaPaths.t(), default: %EvaPaths{}

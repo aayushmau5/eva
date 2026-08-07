@@ -8,10 +8,10 @@ end
 defmodule Eva.BusTest do
   use ExUnit.Case, async: true
 
-  alias Eva.Bus
-  alias Eva.Agent.Events, as: AgentEvents
+  alias Eva.Core.Bus
+  alias Eva.Core.Agent.Events, as: AgentEvents
   alias Eva.BusTest.HostEvent
-  alias Eva.Agent.Messages
+  alias Eva.Core.Agent.Messages
 
   setup_all do
     :ok = Bus.register_events([HostEvent], :host_test)
@@ -120,7 +120,7 @@ defmodule Eva.BusTest do
       session_pid = self()
       Bus.subscribe(session_pid, [:tools])
 
-      result = %Eva.Agent.Tools.AgentToolResult{
+      result = %Eva.Core.Agent.Tools.AgentToolResult{
         content: [%Messages.TextContent{text: "partial"}]
       }
 
@@ -138,7 +138,7 @@ defmodule Eva.BusTest do
       session_pid = self()
       Bus.subscribe(session_pid, [:tools])
 
-      result = %Eva.Agent.Tools.AgentToolResult{
+      result = %Eva.Core.Agent.Tools.AgentToolResult{
         content: [%Messages.TextContent{text: "done"}]
       }
 
@@ -166,9 +166,9 @@ defmodule Eva.BusTest do
       session_pid = self()
       Bus.subscribe(session_pid, [:lifecycle])
 
-      Bus.publish(session_pid, %Eva.Extension.Context{name: "not an event"})
+      Bus.publish(session_pid, %Eva.Core.Extension.Context{name: "not an event"})
 
-      assert_receive %Eva.Extension.Context{name: "not an event"}
+      assert_receive %Eva.Core.Extension.Context{name: "not an event"}
     end
 
     test "forwards unknown events to :lifecycle subscribers" do

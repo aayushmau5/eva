@@ -2,7 +2,7 @@ defmodule Eva.Coding.ToolsTest do
   use ExUnit.Case
 
   alias Eva.Coding.Tools, as: CodingTools
-  alias Eva.Agent.Messages, as: Msg
+  alias Eva.Core.Agent.Messages, as: Msg
 
   @tmp_root Path.expand("tmp/test")
 

@@ -1,4 +1,4 @@
-defmodule Eva.Extension.Server do
+defmodule Eva.Core.Extension.Server do
   use GenServer, restart: :temporary
 
   require Logger
@@ -23,7 +23,7 @@ defmodule Eva.Extension.Server do
     # Runs `terminate/2` so we can clean up stuff
     Process.flag(:trap_exit, true)
 
-    :ok = Eva.Bus.subscribe(context.session_pid, event_classes)
+    :ok = Eva.Core.Bus.subscribe(context.session_pid, event_classes)
 
     case module.init(context) do
       {:ok, extension_state} ->
@@ -100,7 +100,7 @@ defmodule Eva.Extension.Server do
   end
 
   def handle_info(message, state) do
-    callback = if Eva.Bus.event?(message), do: :handle_event, else: :handle_info
+    callback = if Eva.Core.Bus.event?(message), do: :handle_event, else: :handle_info
 
     case safe_apply(state, callback, [message, state.extension_state]) do
       {:ok, {:ok, extension_state}} -> {:noreply, %{state | extension_state: extension_state}}
@@ -138,6 +138,6 @@ defmodule Eva.Extension.Server do
   defp extension_reason(_reason), do: :shutdown
 
   defp via(session_pid, name) do
-    {:via, Registry, {Eva.Extension.Processes, {session_pid, name}}}
+    {:via, Registry, {Eva.Core.Extension.Processes, {session_pid, name}}}
   end
 end

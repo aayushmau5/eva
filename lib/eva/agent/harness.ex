@@ -1,7 +1,8 @@
 defmodule Eva.Agent.Harness do
   use GenServer
 
-  alias Eva.Agent.{Events, Loop, Messages, Tools}
+  alias Eva.Core.Agent.{Events, Messages, Tools}
+  alias Eva.Agent.Loop
 
   @event_modules Events.modules()
 
@@ -12,7 +13,7 @@ defmodule Eva.Agent.Harness do
           | {:system_prompt, String.t()}
           | {:tools, [Tools.AgentTool.t()]}
           | {:max_turns, pos_integer() | nil}
-          | {:messages, [Eva.Agent.Messages.t()]}
+          | {:messages, [Eva.Core.Agent.Messages.t()]}
           | {:queue_mode, :one_at_a_time | :all}
           | {:before_tool_call, Loop.before_tool_callback()}
           | {:after_tool_call, Loop.after_tool_callback()}
@@ -40,12 +41,12 @@ defmodule Eva.Agent.Harness do
     GenServer.call(pid, :continue)
   end
 
-  @spec tools(GenServer.server()) :: [Eva.Agent.Tools.tool()]
+  @spec tools(GenServer.server()) :: [Eva.Core.Agent.Tools.tool()]
   def tools(pid \\ __MODULE__) do
     GenServer.call(pid, :tools)
   end
 
-  @spec messages(pid()) :: [Eva.Agent.Messages.t()]
+  @spec messages(pid()) :: [Eva.Core.Agent.Messages.t()]
   def messages(pid \\ __MODULE__) do
     GenServer.call(pid, :messages)
   end

@@ -61,7 +61,7 @@ defmodule Eva.Extension.HooksTest.ResultAppendExt do
 
   @impl true
   def handle_call({:hook, :tool_result, {_tool_call, result, is_error}}, _from, state) do
-    alias Eva.Agent.{Messages, Tools}
+    alias Eva.Core.Agent.{Messages, Tools}
 
     [%Messages.TextContent{text: existing}] = result.content
 
@@ -112,7 +112,7 @@ defmodule Eva.Extension.HooksTest do
   use ExUnit.Case, async: true
 
   alias Eva.Extension.Hooks
-  alias Eva.Agent.{Messages, Tools}
+  alias Eva.Core.Agent.{Messages, Tools}
 
   defp tool_call do
     %Messages.ToolCall{id: "tc1", name: "echo", arguments: %{"msg" => "hello"}}

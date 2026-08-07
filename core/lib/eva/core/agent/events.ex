@@ -1,10 +1,10 @@
-defmodule Eva.Agent.Events do
+defmodule Eva.Core.Agent.Events do
   @moduledoc """
   Events emitted by Eva's agent layer(i.e. the loop).
   """
   use TypedStruct
 
-  alias Eva.Agent.{Messages, Tools}
+  alias Eva.Core.Agent.{Messages, Tools}
 
   @type t ::
           AgentStart.t()

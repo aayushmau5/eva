@@ -3,7 +3,7 @@ defmodule Eva.AI.OpenAICompatibleProvider do
 
   alias Eva.AI.{Auth, Events, StreamState}
   alias Eva.AI.Config.OpenAICompatible, as: OpenAICompatibleConfig
-  alias Eva.Agent.{Messages, Tools}
+  alias Eva.Core.Agent.{Messages, Tools}
 
   @type opts :: [name: atom(), config: OpenAICompatibleConfig.t()]
   @type stream_opts :: %{

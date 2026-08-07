@@ -1,4 +1,4 @@
-defmodule Eva.Extension.Agents do
+defmodule Eva.Core.Extension.Agents do
   @moduledoc """
   Runs child agents on an extension's behalf.
 
@@ -32,7 +32,7 @@ defmodule Eva.Extension.Agents do
   start asking the user questions about work they are not watching.
   """
 
-  alias Eva.Extension.Context
+  alias Eva.Core.Extension.Context
 
   @max_depth 3
 
@@ -40,11 +40,11 @@ defmodule Eva.Extension.Agents do
           required(:prompt) => String.t(),
           optional(:model) => String.t(),
           optional(:system_prompt) => String.t(),
-          optional(:tools) => [Eva.Agent.Tools.AgentTool.t()],
+          optional(:tools) => [Eva.Core.Agent.Tools.AgentTool.t()],
           optional(:max_turns) => pos_integer() | nil,
           optional(:depth) => non_neg_integer(),
           optional(:timeout) => timeout(),
-          optional(:on_event) => (Eva.Agent.Events.t() -> any())
+          optional(:on_event) => (Eva.Core.Agent.Events.t() -> any())
         }
 
   @doc "How deep a chain of agents may go before `spawn_agent/2` refuses."
@@ -62,11 +62,11 @@ defmodule Eva.Extension.Agents do
   `{:error, :timeout}` comes back.
 
   Pass `:on_event` to watch the child work — it fires for every harness event, which
-  is where `Eva.Agent.Tools.report_update/2` goes if you want the parent's tool row to
+  is where `Eva.Core.Agent.Tools.report_update/2` goes if you want the parent's tool row to
   show progress instead of sitting there.
   """
   @spec run_agent(Context.t(), opts()) ::
-          {:ok, [Eva.Agent.Messages.agent_message()]} | {:error, term()}
+          {:ok, [Eva.Core.Agent.Messages.agent_message()]} | {:error, term()}
   def run_agent(%Context{} = ctx, opts) do
     timeout = Map.get(opts, :timeout, :timer.minutes(5))
     on_event = Map.get(opts, :on_event)
@@ -121,7 +121,7 @@ defmodule Eva.Extension.Agents do
   end
 
   defp extension_process(%Context{} = ctx) do
-    case Eva.Extension.API.whereis(ctx, ctx.name) do
+    case Eva.Core.Extension.API.whereis(ctx, ctx.name) do
       nil -> {:error, :no_extension_process}
       pid -> {:ok, pid}
     end

@@ -1,8 +1,8 @@
 # Top level, not nested: nesting would make these
 # `Eva.Extension.HandleInfoTest.Eva.Extension.Records`, and the namespace is what
-# `use Eva.Extension` resolves against.
+# `use Eva.Core.Extension` resolves against.
 defmodule Eva.Extension.InfoRecords do
-  use Eva.Extension
+  use Eva.Core.Extension
 
   defmodule Own do
     defstruct [:value]
@@ -31,7 +31,7 @@ defmodule Eva.Extension.InfoRecords do
 end
 
 defmodule Eva.Extension.InfoSilent do
-  use Eva.Extension
+  use Eva.Core.Extension
 
   @impl true
   def setup(_ctx), do: {:ok, %Spec{commands: [%Spec.Command{name: "noop"}]}}
@@ -40,7 +40,7 @@ end
 defmodule Eva.Extension.HandleInfoTest do
   use ExUnit.Case, async: false
 
-  alias Eva.Agent.Events
+  alias Eva.Core.Agent.Events
   alias Eva.Extension.InfoRecords
   alias Eva.Test.ExtensionHarness, as: Harness
 
@@ -99,34 +99,34 @@ defmodule Eva.Extension.HandleInfoTest do
     end
   end
 
-  describe "Eva.Bus.event?/1" do
+  describe "Eva.Core.Bus.event?/1" do
     test "true for agent events" do
-      assert Eva.Bus.event?(%Events.TurnEnd{})
-      assert Eva.Bus.event?(%Events.MessageUpdate{})
-      assert Eva.Bus.event?(%Events.ExtensionEvent{extension: "x", payload: nil})
+      assert Eva.Core.Bus.event?(%Events.TurnEnd{})
+      assert Eva.Core.Bus.event?(%Events.MessageUpdate{})
+      assert Eva.Core.Bus.event?(%Events.ExtensionEvent{extension: "x", payload: nil})
     end
 
     test "false for a struct the bus does not know — an extension's own message" do
       # This is how MCP client events reach the MCP extension now that MCP is not core's
       # to publish: they are structs the bus has never heard of, so they route to
       # `handle_info/2` rather than `handle_event/2`.
-      refute Eva.Bus.event?(%Eva.Extension.Context{name: "mcp"})
+      refute Eva.Core.Bus.event?(%Eva.Core.Extension.Context{name: "mcp"})
     end
 
     test "false for anything else" do
-      refute Eva.Bus.event?(%InfoRecords.Own{value: 1})
-      refute Eva.Bus.event?({:connected, "github"})
-      refute Eva.Bus.event?(:tuple_free_atom)
-      refute Eva.Bus.event?(%{not: "a struct"})
+      refute Eva.Core.Bus.event?(%InfoRecords.Own{value: 1})
+      refute Eva.Core.Bus.event?({:connected, "github"})
+      refute Eva.Core.Bus.event?(:tuple_free_atom)
+      refute Eva.Core.Bus.event?(%{not: "a struct"})
     end
   end
 
   describe "publish_event/2" do
     test "stamps the extension's own name and lands on the :extension class" do
       harness = Harness.start(InfoRecords, name: "notes")
-      :ok = Eva.Bus.subscribe(harness.session, [:extension])
+      :ok = Eva.Core.Bus.subscribe(harness.session, [:extension])
 
-      Eva.Extension.API.publish_event(harness.context, %{type: :indexed, count: 3})
+      Eva.Core.Extension.API.publish_event(harness.context, %{type: :indexed, count: 3})
 
       assert_receive %Events.ExtensionEvent{
                        extension: "notes",

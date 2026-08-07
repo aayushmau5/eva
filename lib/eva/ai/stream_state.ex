@@ -14,7 +14,7 @@ defmodule Eva.AI.StreamState do
   """
 
   alias Eva.AI.Sse
-  alias Eva.Agent.Messages.ToolCall
+  alias Eva.Core.Agent.Messages.ToolCall
 
   # TODO: also need to add usage etc.
   defstruct buffer: "",

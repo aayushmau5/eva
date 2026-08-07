@@ -1,7 +1,7 @@
 defmodule Eva.Extension.MemoryStub do
-  use Eva.Extension
+  use Eva.Core.Extension
 
-  alias Eva.Agent.Messages
+  alias Eva.Core.Agent.Messages
 
   @impl true
   def setup(_ctx), do: {:ok, %Spec{hooks: [:context]}}
@@ -19,7 +19,7 @@ defmodule Eva.Extension.MemoryStub do
 end
 
 defmodule Eva.Extension.ContextCrasher do
-  use Eva.Extension
+  use Eva.Core.Extension
 
   @impl true
   def setup(_ctx), do: {:ok, %Spec{hooks: [:context]}}
@@ -29,7 +29,7 @@ defmodule Eva.Extension.ContextCrasher do
 end
 
 defmodule Eva.Extension.ContextGarbage do
-  use Eva.Extension
+  use Eva.Core.Extension
 
   @impl true
   def setup(_ctx), do: {:ok, %Spec{hooks: [:context]}}
@@ -41,7 +41,7 @@ end
 defmodule Eva.Extension.ContextHookTest do
   use ExUnit.Case, async: false
 
-  alias Eva.Agent.Messages
+  alias Eva.Core.Agent.Messages
   alias Eva.Extension.Hooks
   alias Eva.Test.ExtensionHarness, as: Harness
 

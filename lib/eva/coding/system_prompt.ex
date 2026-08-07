@@ -1,7 +1,7 @@
 defmodule Eva.Coding.SystemPrompt do
   use TypedStruct
 
-  alias Eva.Agent.Tools
+  alias Eva.Core.Agent.Tools
 
   alias Eva.Coding.Skills
   alias Eva.Coding.ProjectContext

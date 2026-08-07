@@ -14,7 +14,7 @@ Two ways to ship one, and the difference is where it runs:
 
 Everything below is about scripts, and **all of it applies unchanged to a project** — same
 `setup/1`, same callbacks, same `API`. A project only differs in packaging: it has its own
-`mix.exs` and its own dependencies, it starts `Eva.Extension.Node` from its application,
+`mix.exs` and its own dependencies, it starts `Eva.Core.Extension.Node` from its application,
 and you start it yourself (`mix eva.ext.start <name>`, or `iex -S mix` while developing).
 Reach for one when the extension needs libraries of its own, or when one file has stopped
 being enough. See [extension-nodes.md](../../../docs/extension-nodes.md).
@@ -44,7 +44,7 @@ to compile, and a module under the wrong extension's namespace is refused at loa
 
 ```elixir
 defmodule Eva.Extension.Notes do
-  use Eva.Extension
+  use Eva.Core.Extension
 
   @impl true
   def setup(_ctx) do
@@ -53,7 +53,7 @@ defmodule Eva.Extension.Notes do
 end
 ```
 
-`use Eva.Extension` aliases `Spec`, `API`, `Messages`, and `Tools` for you, and injects
+`use Eva.Core.Extension` aliases `Spec`, `API`, `Messages`, and `Tools` for you, and injects
 defaults for every optional callback.
 
 ---
@@ -214,11 +214,11 @@ Declare classes, implement `handle_event/2`.
 
 ```elixir
 @impl true
-def handle_event(%Eva.Agent.Events.TurnEnd{}, count), do: {:ok, count + 1}
+def handle_event(%Eva.Core.Agent.Events.TurnEnd{}, count), do: {:ok, count + 1}
 def handle_event(_event, state), do: {:ok, state}   # REQUIRED — see below
 ```
 
-**You must write a catch-all clause.** `use Eva.Extension` injects one, but defining any
+**You must write a catch-all clause.** `use Eva.Core.Extension` injects one, but defining any
 `handle_event/2` clause of your own replaces *all* of the injected ones. Without a catch-all
 you'll `FunctionClauseError` on the first event you didn't anticipate.
 
@@ -277,7 +277,7 @@ keys come back as strings on resume and won't match what you wrote.
 Passed to `setup/1`, `init/1`, and whatever you close over:
 
 ```elixir
-%Eva.Extension.Context{
+%Eva.Core.Extension.Context{
   name:            "notes",        # from the filename
   cwd:             "/path/to/project",
   model:           "deepseek-v4-pro",
@@ -305,7 +305,7 @@ Eva.Coding.Session.list_extensions(session_pid)
 ```
 
 Returns a row per extension with `running?`, `tool_count`, and `commands`. If yours is
-missing, the reason is in the diagnostics. Common causes: no `use Eva.Extension`, a compile
+missing, the reason is in the diagnostics. Common causes: no `use Eva.Core.Extension`, a compile
 error, `setup/1` returned something other than `{:ok, %Spec{}}`, or a name already claimed.
 
 Editing an extension needs `Session.reload_extensions/1` (or a new session) — the compiled

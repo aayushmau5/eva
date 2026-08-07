@@ -25,7 +25,7 @@ defmodule Eva.Agent.Loop do
 
   alias Eva.AI.Events, as: AIEvents
   alias Eva.AI.OpenAICompatibleProvider
-  alias Eva.Agent.{Events, Messages, Tools}
+  alias Eva.Core.Agent.{Events, Messages, Tools}
 
   @typedoc """
   Called before each tool execution. Receives the tool call.

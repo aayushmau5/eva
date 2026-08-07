@@ -1,8 +1,8 @@
-defmodule Eva.Bus do
+defmodule Eva.Core.Bus do
   @moduledoc """
-  Eva.Bus allows multiple listeners to subscribe to harness' events.
+  Eva.Core.Bus allows multiple listeners to subscribe to harness' events.
   """
-  alias Eva.Agent.Events, as: AgentEvents
+  alias Eva.Core.Agent.Events, as: AgentEvents
 
   @classes [:stream, :lifecycle, :tools, :extension]
   @type class :: :stream | :lifecycle | :tools | :extension | atom()
@@ -18,7 +18,7 @@ defmodule Eva.Bus do
   `event?/1` pick them up.
 
   Anything an *extension* publishes needs none of this: it arrives wrapped in
-  `Eva.Agent.Events.ExtensionEvent`, which the bus already knows.
+  `Eva.Core.Agent.Events.ExtensionEvent`, which the bus already knows.
   """
   @spec register_events([module()], class()) :: :ok
   def register_events(modules, class) when is_list(modules) and is_atom(class) do
@@ -88,10 +88,10 @@ defmodule Eva.Bus do
   Whether a message is an event this bus publishes.
 
   Events arrive as bare structs, exactly like a message an extension's own process
-  sent it. `Eva.Extension.Server` uses this to decide between `handle_event/2` and
+  sent it. `Eva.Core.Extension.Server` uses this to decide between `handle_event/2` and
   `handle_info/2`.
 
-  Anything an extension publishes is wrapped in `Eva.Agent.Events.ExtensionEvent`.
+  Anything an extension publishes is wrapped in `Eva.Core.Agent.Events.ExtensionEvent`.
   """
   @spec event?(term()) :: boolean()
   def event?(%{__struct__: module}),

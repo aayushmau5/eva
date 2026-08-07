@@ -4,7 +4,7 @@ defmodule Eva.AI.Events do
   """
   use TypedStruct
 
-  alias Eva.Agent.Messages
+  alias Eva.Core.Agent.Messages
 
   @type t ::
           AssistantStart.t()

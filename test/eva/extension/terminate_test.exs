@@ -1,8 +1,8 @@
 # Defined at the top level rather than nested in the test module: nesting would make
 # these `Eva.Extension.TerminateTest.Eva.Extension.Cleans`, and the namespace is what
-# `use Eva.Extension` resolves against.
+# `use Eva.Core.Extension` resolves against.
 defmodule Eva.Extension.TerminateCleans do
-  use Eva.Extension
+  use Eva.Core.Extension
 
   @impl true
   def setup(_ctx), do: {:ok, %Spec{commands: [%Spec.Command{name: "noop"}]}}
@@ -18,7 +18,7 @@ defmodule Eva.Extension.TerminateCleans do
 end
 
 defmodule Eva.Extension.TerminateRaises do
-  use Eva.Extension
+  use Eva.Core.Extension
 
   @impl true
   def setup(_ctx), do: {:ok, %Spec{commands: [%Spec.Command{name: "noop"}]}}
@@ -28,7 +28,7 @@ defmodule Eva.Extension.TerminateRaises do
 end
 
 defmodule Eva.Extension.TerminateSilent do
-  use Eva.Extension
+  use Eva.Core.Extension
 
   @impl true
   def setup(_ctx), do: {:ok, %Spec{commands: [%Spec.Command{name: "noop"}]}}

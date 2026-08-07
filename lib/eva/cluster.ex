@@ -35,10 +35,10 @@ defmodule Eva.Cluster do
 
   require Logger
 
-  alias Eva.Cluster.Protocol
+  alias Eva.Core.Cluster.Protocol
   alias Eva.Coding.Resources
   alias Eva.Extension.Package
-  alias Eva.Cluster.Protocol.Announcement
+  alias Eva.Core.Cluster.Protocol.Announcement
 
   @type member :: %{
           role: Protocol.role(),

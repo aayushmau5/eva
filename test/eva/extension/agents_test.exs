@@ -1,5 +1,5 @@
 defmodule Eva.Extension.Delegator do
-  use Eva.Extension
+  use Eva.Core.Extension
 
   @impl true
   def setup(_ctx), do: {:ok, %Spec{commands: [%Spec.Command{name: "seen"}]}}
@@ -27,8 +27,9 @@ end
 defmodule Eva.Extension.AgentsTest do
   use ExUnit.Case, async: false
 
-  alias Eva.Agent.{Events, Messages}
-  alias Eva.Extension.{AgentRunner, Agents, Capabilities, Context}
+  alias Eva.Core.Agent.{Events, Messages}
+  alias Eva.Extension.{AgentRunner, Capabilities}
+  alias Eva.Core.Extension.{Agents, Context}
   alias Eva.Test.ExtensionHarness, as: Harness
 
   # `run_agent/2` and `spawn_agent/2` go through the real runner, which starts a real

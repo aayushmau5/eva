@@ -3,8 +3,8 @@ defmodule Eva.Agent.Session.Entries do
   Session entry structs.
   """
 
-  alias Eva.Agent.Messages
-  alias Eva.Agent.Utils
+  alias Eva.Core.Agent.Messages
+  alias Eva.Core.Agent.Utils
 
   @type t() ::
           Message.t()
@@ -19,8 +19,8 @@ defmodule Eva.Agent.Session.Entries do
 
   defmodule Message do
     use TypedStruct
-    alias Eva.Agent.Messages
-    alias Eva.Agent.Utils
+    alias Eva.Core.Agent.Messages
+    alias Eva.Core.Agent.Utils
 
     typedstruct do
       field :id, String.t(), enforce: true
@@ -43,8 +43,8 @@ defmodule Eva.Agent.Session.Entries do
 
   defmodule ModelChange do
     use TypedStruct
-    alias Eva.Agent.Messages
-    alias Eva.Agent.Utils
+    alias Eva.Core.Agent.Messages
+    alias Eva.Core.Agent.Utils
 
     typedstruct do
       field :id, String.t(), enforce: true
@@ -67,8 +67,8 @@ defmodule Eva.Agent.Session.Entries do
 
   defmodule ThinkingLevelChange do
     use TypedStruct
-    alias Eva.Agent.Messages
-    alias Eva.Agent.Utils
+    alias Eva.Core.Agent.Messages
+    alias Eva.Core.Agent.Utils
 
     typedstruct do
       field :id, String.t(), enforce: true
@@ -91,8 +91,8 @@ defmodule Eva.Agent.Session.Entries do
 
   defmodule Compaction do
     use TypedStruct
-    alias Eva.Agent.Messages
-    alias Eva.Agent.Utils
+    alias Eva.Core.Agent.Messages
+    alias Eva.Core.Agent.Utils
 
     typedstruct do
       field :id, String.t(), enforce: true
@@ -117,8 +117,8 @@ defmodule Eva.Agent.Session.Entries do
 
   defmodule BranchSummary do
     use TypedStruct
-    alias Eva.Agent.Messages
-    alias Eva.Agent.Utils
+    alias Eva.Core.Agent.Messages
+    alias Eva.Core.Agent.Utils
 
     typedstruct do
       field :id, String.t(), enforce: true
@@ -143,8 +143,8 @@ defmodule Eva.Agent.Session.Entries do
 
   defmodule Label do
     use TypedStruct
-    alias Eva.Agent.Messages
-    alias Eva.Agent.Utils
+    alias Eva.Core.Agent.Messages
+    alias Eva.Core.Agent.Utils
 
     typedstruct do
       field :id, String.t(), enforce: true
@@ -167,8 +167,8 @@ defmodule Eva.Agent.Session.Entries do
 
   defmodule Leaf do
     use TypedStruct
-    alias Eva.Agent.Messages
-    alias Eva.Agent.Utils
+    alias Eva.Core.Agent.Messages
+    alias Eva.Core.Agent.Utils
 
     typedstruct do
       field :id, String.t(), enforce: true
@@ -191,8 +191,8 @@ defmodule Eva.Agent.Session.Entries do
 
   defmodule SessionInfo do
     use TypedStruct
-    alias Eva.Agent.Messages
-    alias Eva.Agent.Utils
+    alias Eva.Core.Agent.Messages
+    alias Eva.Core.Agent.Utils
 
     typedstruct do
       field :id, String.t(), enforce: true
@@ -217,8 +217,8 @@ defmodule Eva.Agent.Session.Entries do
 
   defmodule Custom do
     use TypedStruct
-    alias Eva.Agent.Messages
-    alias Eva.Agent.Utils
+    alias Eva.Core.Agent.Messages
+    alias Eva.Core.Agent.Utils
 
     typedstruct do
       field :id, String.t(), enforce: true

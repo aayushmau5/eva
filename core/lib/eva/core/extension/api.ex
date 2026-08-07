@@ -1,4 +1,4 @@
-defmodule Eva.Extension.API do
+defmodule Eva.Core.Extension.API do
   @moduledoc """
   Called by extensions to reach back into the system.
 
@@ -15,11 +15,11 @@ defmodule Eva.Extension.API do
 
   require Logger
 
-  alias Eva.Agent.Messages
-  alias Eva.Agent.Tools
-  alias Eva.Extension.Context
-  alias Eva.Extension.Processes
-  alias Eva.Extension.ToolRegistry
+  alias Eva.Core.Agent.Messages
+  alias Eva.Core.Agent.Tools
+  alias Eva.Core.Extension.Context
+  alias Eva.Core.Extension.Processes
+  alias Eva.Core.Extension.ToolRegistry
 
   @default_timeout 5_000
 
@@ -58,9 +58,9 @@ defmodule Eva.Extension.API do
   """
   @spec publish_event(Context.t(), term()) :: :ok
   def publish_event(%Context{session_pid: session_pid, name: name}, payload) do
-    Eva.Bus.publish(
+    Eva.Core.Bus.publish(
       session_pid,
-      %Eva.Agent.Events.ExtensionEvent{extension: name, payload: payload},
+      %Eva.Core.Agent.Events.ExtensionEvent{extension: name, payload: payload},
       :extension
     )
   end
@@ -76,7 +76,7 @@ defmodule Eva.Extension.API do
   def update_tools(%Context{session_pid: session_pid, name: name}, tools) when is_list(tools) do
     # A closure cannot be called on a node that lacks its module, so when the session is
     # elsewhere the executors stay here and only descriptions travel. The host binds a
-    # proxy that calls back — see `Eva.Extension.ToolRegistry`. Nothing an extension author
+    # proxy that calls back — see `Eva.Core.Extension.ToolRegistry`. Nothing an extension author
     # writes changes between the two cases.
     tools =
       if remote?(session_pid) do

@@ -2,7 +2,7 @@ defmodule Eva.Coding.ContextWindowTest do
   use ExUnit.Case, async: true
 
   alias Eva.Coding.ContextWindow
-  alias Eva.Agent.{Messages, Tools}
+  alias Eva.Core.Agent.{Messages, Tools}
 
   describe "estimate_text_tokens/1" do
     test "returns 0 for empty string" do

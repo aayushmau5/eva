@@ -7,7 +7,7 @@ defmodule Eva.Cluster.Distribution do
 
       config :eva, distribution: true
 
-  Starting distribution registers this VM with epmd, and that registration is what joiners read — see `Eva.Cluster.Discovery`.
+  Starting distribution registers this VM with epmd, and that registration is what joiners read — see `Eva.Core.Cluster.Discovery`.
 
   ## Trust
 

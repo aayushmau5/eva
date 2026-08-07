@@ -1,7 +1,7 @@
 defmodule Eva.Agent.Session.TreeTest do
   use ExUnit.Case, async: true
 
-  alias Eva.Agent.Messages
+  alias Eva.Core.Agent.Messages
   alias Eva.Agent.Session.{Entries, State, Tree}
 
   defp user(text), do: %Messages.UserMessage{content: text}

@@ -6,7 +6,7 @@ defmodule Eva.Extension.AgentRunner do
   relays it to whoever asked for the agent. Relaying rather than pointing the harness
   straight at the caller matters twice over: events get tagged with a `ref` so several
   agents can run at once, and they arrive as tuples rather than bare event structs —
-  `Eva.Extension.Server` routes bare structs to `handle_event/2`, where they would be
+  `Eva.Core.Extension.Server` routes bare structs to `handle_event/2`, where they would be
   indistinguishable from the extension's own bus subscriptions.
 
   The receiver gets:
@@ -24,7 +24,8 @@ defmodule Eva.Extension.AgentRunner do
   use GenServer, restart: :temporary
 
   alias Eva.AI.OpenAICompatibleProvider
-  alias Eva.Agent.{Events, Harness, Messages}
+  alias Eva.Core.Agent.{Events, Messages}
+  alias Eva.Agent.Harness
 
   @agent_events Events.modules()
 
@@ -34,7 +35,7 @@ defmodule Eva.Extension.AgentRunner do
           required(:reply_to) => pid(),
           optional(:model) => String.t(),
           optional(:system_prompt) => String.t(),
-          optional(:tools) => [Eva.Agent.Tools.AgentTool.t()],
+          optional(:tools) => [Eva.Core.Agent.Tools.AgentTool.t()],
           optional(:max_turns) => pos_integer() | nil
         }
 

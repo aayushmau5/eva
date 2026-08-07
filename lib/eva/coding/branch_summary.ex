@@ -11,7 +11,7 @@ defmodule Eva.Coding.BranchSummary do
   alias Eva.AI.Config, as: ProviderConfig
   alias Eva.AI.Events, as: AIEvents
   alias Eva.AI.OpenAICompatibleProvider
-  alias Eva.Agent.Messages
+  alias Eva.Core.Agent.Messages
 
   @max_summary_source_message_chars 4_000
   @max_summary_source_total_chars 60_000

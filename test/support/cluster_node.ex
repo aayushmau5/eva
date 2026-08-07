@@ -51,7 +51,7 @@ defmodule Eva.Test.ClusterNode do
   def announce(%{peer: peer}, name, module) do
     {:ok, _apps} = :peer.call(peer, Application, :ensure_all_started, [:eva_core])
 
-    :peer.call(peer, Eva.Extension.Node, :start_link, [
+    :peer.call(peer, Eva.Core.Extension.Node, :start_link, [
       [name: name, module: module, eva_node: node()]
     ])
   end

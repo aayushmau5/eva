@@ -1,6 +1,6 @@
 defmodule Eva.Extension.MCP.ToolAdapter do
   @moduledoc """
-  Turns an MCP tool descriptor into an `Eva.Agent.Tools.AgentTool`.
+  Turns an MCP tool descriptor into an `Eva.Core.Agent.Tools.AgentTool`.
 
   Names are prefixed `mcp__<server>__<tool>` so they can never collide with a
   built-in, and so a persisted transcript identifies an MCP-origin tool call
@@ -8,8 +8,8 @@ defmodule Eva.Extension.MCP.ToolAdapter do
   name for the `tools/call` — nothing needs to un-mangle.
   """
 
-  alias Eva.Agent.Messages
-  alias Eva.Agent.Tools
+  alias Eva.Core.Agent.Messages
+  alias Eva.Core.Agent.Tools
   alias Eva.Extension.MCP.{Client, Config, Events}
 
   @max_name_length 64

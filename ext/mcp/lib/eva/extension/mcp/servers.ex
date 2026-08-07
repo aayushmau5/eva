@@ -5,7 +5,7 @@ defmodule Eva.Extension.MCP.Servers do
   use TypedStruct
   require Logger
 
-  alias Eva.Agent.Tools
+  alias Eva.Core.Agent.Tools
   alias Eva.Extension.MCP.{Client, Config, Events, Supervisor, ToolAdapter}
   alias Eva.Extension.MCP.Config.Paths
 

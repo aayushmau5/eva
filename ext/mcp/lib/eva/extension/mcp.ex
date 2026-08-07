@@ -23,7 +23,7 @@ defmodule Eva.Extension.MCP do
       /mcp disable <server> --persist
   """
 
-  use Eva.Extension
+  use Eva.Core.Extension
 
   alias Eva.Extension.MCP.{Config, Events, Servers}
 

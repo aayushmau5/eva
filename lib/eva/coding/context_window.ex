@@ -7,7 +7,7 @@ defmodule Eva.Coding.ContextWindow do
 
   use TypedStruct
 
-  alias Eva.Agent.{Messages, Tools}
+  alias Eva.Core.Agent.{Messages, Tools}
 
   # rough rule-of-thumb
   @chars_per_token 4

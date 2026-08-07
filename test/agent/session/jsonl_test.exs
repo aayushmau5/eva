@@ -1,8 +1,8 @@
 defmodule Eva.Agent.Session.JsonlTest do
   use ExUnit.Case
 
-  alias Eva.Agent.Messages
-  alias Eva.Agent.Messages.ToolCall
+  alias Eva.Core.Agent.Messages
+  alias Eva.Core.Agent.Messages.ToolCall
   alias Eva.Agent.Session.Entries
   alias Eva.Agent.Session.Jsonl
 

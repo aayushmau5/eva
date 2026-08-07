@@ -21,15 +21,15 @@ defmodule Eva.Extension.LoaderTest do
   # is `<name>.exs` and the module is `Eva.Extension.<Name>`.
   defp unique(prefix), do: "#{prefix}_#{System.unique_integer([:positive])}"
 
-  defp module_for(name), do: Eva.Extension.namespace(name)
+  defp module_for(name), do: Eva.Core.Extension.namespace(name)
 
   defp valid_extension(name) do
     ~s'''
     defmodule #{inspect(module_for(name))} do
-      use Eva.Extension
+      use Eva.Core.Extension
 
       def setup(_ctx) do
-        {:ok, %Eva.Extension.Spec{guidelines: ["test guideline"]}}
+        {:ok, %Eva.Core.Extension.Spec{guidelines: ["test guideline"]}}
       end
     end
     '''
@@ -38,7 +38,7 @@ defmodule Eva.Extension.LoaderTest do
   defp extension_with_no_setup(name) do
     ~s'''
     defmodule #{inspect(module_for(name))} do
-      use Eva.Extension
+      use Eva.Core.Extension
 
       def init(_ctx), do: {:ok, nil}
     end
@@ -56,10 +56,10 @@ defmodule Eva.Extension.LoaderTest do
   defp stateful_extension(name) do
     ~s'''
     defmodule #{inspect(module_for(name))} do
-      use Eva.Extension
+      use Eva.Core.Extension
 
       def setup(_ctx) do
-        {:ok, %Eva.Extension.Spec{
+        {:ok, %Eva.Core.Extension.Spec{
           hooks: [:tool_call],
           event_classes: [:stream]
         }}
@@ -190,7 +190,7 @@ defmodule Eva.Extension.LoaderTest do
       assert String.contains?(hd(diagnostics), "does not export setup/1")
     end
 
-    test "reports diagnostic for module without use Eva.Extension" do
+    test "reports diagnostic for module without use Eva.Core.Extension" do
       tmp = tmp_dir()
       write_extension(tmp, "plain.exs", extension_without_use())
 
@@ -198,7 +198,7 @@ defmodule Eva.Extension.LoaderTest do
 
       assert loaded == []
       assert length(diagnostics) == 1
-      assert String.contains?(hd(diagnostics), "no module that uses Eva.Extension")
+      assert String.contains?(hd(diagnostics), "no module that uses Eva.Core.Extension")
     end
 
     test "refuses a module outside the Eva.Extension namespace" do
@@ -208,9 +208,9 @@ defmodule Eva.Extension.LoaderTest do
       path =
         write_extension(tmp, "#{name}.exs", ~s'''
         defmodule NotNamespaced_#{System.unique_integer([:positive])} do
-          use Eva.Extension
+          use Eva.Core.Extension
 
-          def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+          def setup(_ctx), do: {:ok, %Eva.Core.Extension.Spec{}}
         end
         ''')
 
@@ -228,9 +228,9 @@ defmodule Eva.Extension.LoaderTest do
       path =
         write_extension(tmp, "#{name}.exs", ~s'''
         defmodule #{inspect(module_for(other))} do
-          use Eva.Extension
+          use Eva.Core.Extension
 
-          def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+          def setup(_ctx), do: {:ok, %Eva.Core.Extension.Spec{}}
         end
         ''')
 
@@ -251,9 +251,9 @@ defmodule Eva.Extension.LoaderTest do
         end
 
         defmodule #{inspect(module_for(name))} do
-          use Eva.Extension
+          use Eva.Core.Extension
 
-          def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+          def setup(_ctx), do: {:ok, %Eva.Core.Extension.Spec{}}
         end
         ''')
 
@@ -338,9 +338,9 @@ defmodule Eva.Extension.LoaderTest do
         Code.require_file(Path.join(__DIR__, "helper.exs"))
 
         defmodule #{inspect(extension)} do
-          use Eva.Extension
+          use Eva.Core.Extension
 
-          def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+          def setup(_ctx), do: {:ok, %Eva.Core.Extension.Spec{}}
           def value, do: #{inspect(helper)}.value()
         end
         ''')

@@ -1,4 +1,4 @@
-defmodule Eva.Agent.Utils do
+defmodule Eva.Core.Agent.Utils do
   @doc """
   UUIDv4 hex.
 

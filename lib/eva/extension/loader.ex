@@ -249,14 +249,14 @@ defmodule Eva.Extension.Loader do
     _ -> nil
   end
 
-  # Picked by the marker `use Eva.Extension` injects.
+  # Picked by the marker `use Eva.Core.Extension` injects.
   defp extension_module(modules, path) do
     case Enum.filter(modules, &extension_module?/1) do
       [module] ->
         {:ok, module}
 
       [] ->
-        {:error, "#{path} defines no module that uses Eva.Extension"}
+        {:error, "#{path} defines no module that uses Eva.Core.Extension"}
 
       many ->
         {:error,
@@ -270,11 +270,11 @@ defmodule Eva.Extension.Loader do
 
   # A missing `setup/1` is only a compile warning from `@behaviour`, so check here.
   #
-  # `use Eva.Extension` already refuses a module outside `Eva.Extension.*`; this pins
+  # `use Eva.Core.Extension` already refuses a module outside `Eva.Extension.*`; this pins
   # it to *this* extension's own subtree, so `mcp` cannot define `Eva.Extension.Memory`
   # and quietly take a name that belongs to something else.
   defp validate(module, name, path) do
-    expected = Eva.Extension.namespace(name)
+    expected = Eva.Core.Extension.namespace(name)
 
     # Case-insensitively, so an extension named `mcp` can call itself `Eva.Extension.MCP`
     # rather than `Eva.Extension.Mcp`.

@@ -14,7 +14,7 @@ defmodule Eva.MCPNodeTest do
   @moduletag timeout: 180_000
 
   alias Eva.Cluster
-  alias Eva.Cluster.Discovery
+  alias Eva.Core.Cluster.Discovery
   alias Eva.Cluster.Distribution
   alias Eva.Coding.Resources
   alias Eva.Extension.{Package, Set}

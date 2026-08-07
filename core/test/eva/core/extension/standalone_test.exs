@@ -1,5 +1,5 @@
 defmodule Eva.Extension.Standalone do
-  use Eva.Extension
+  use Eva.Core.Extension
 
   def setup(_ctx), do: {:ok, %Spec{hooks: [:tool_call], event_classes: [:lifecycle]}}
 
@@ -23,7 +23,7 @@ defmodule Eva.Extension.StandaloneTest do
 
   use ExUnit.Case, async: false
 
-  alias Eva.Extension.{Context, Supervisor}
+  alias Eva.Core.Extension.{Context, Supervisor}
 
   setup do
     ctx = %Context{
@@ -44,8 +44,8 @@ defmodule Eva.Extension.StandaloneTest do
   test "the application brings up everything an extension needs" do
     # Each of these fails silently when missing — a registry that isn't there, a scope
     # that delivers nothing — so assert them rather than waiting to be surprised.
-    assert is_pid(Process.whereis(Eva.Extension.Processes))
-    assert is_pid(Process.whereis(Eva.Extension.Supervisor))
+    assert is_pid(Process.whereis(Eva.Core.Extension.Processes))
+    assert is_pid(Process.whereis(Eva.Core.Extension.Supervisor))
     assert :pg.get_members(Eva.PG, :no_such_group) == []
   end
 
@@ -59,13 +59,13 @@ defmodule Eva.Extension.StandaloneTest do
   end
 
   test "bus events reach handle_event/2", %{pid: pid} do
-    Eva.Bus.publish(self(), %Eva.Agent.Events.TurnStart{}, :lifecycle)
+    Eva.Core.Bus.publish(self(), %Eva.Core.Agent.Events.TurnStart{}, :lifecycle)
 
     assert GenServer.call(pid, {:command, "events", ""}) == {:text, 1}
   end
 
   test "a struct the bus does not know is not an event" do
-    refute Eva.Bus.event?(%Context{})
-    assert Eva.Bus.event?(%Eva.Agent.Events.TurnStart{})
+    refute Eva.Core.Bus.event?(%Context{})
+    assert Eva.Core.Bus.event?(%Eva.Core.Agent.Events.TurnStart{})
   end
 end

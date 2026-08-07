@@ -7,7 +7,7 @@ defmodule Eva.Extension.ServerTest.StateHolder do
 end
 
 defmodule Eva.Extension.ServerTest.HooksTestModule do
-  def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+  def setup(_ctx), do: {:ok, %Eva.Core.Extension.Spec{}}
 
   def init(_ctx), do: {:ok, nil}
 
@@ -20,7 +20,7 @@ defmodule Eva.Extension.ServerTest.HooksTestModule do
 end
 
 defmodule Eva.Extension.ServerTest.RewriteTestModule do
-  def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+  def setup(_ctx), do: {:ok, %Eva.Core.Extension.Spec{}}
 
   def init(_ctx) do
     {:ok, Eva.Extension.ServerTest.StateHolder.get() || %{}}
@@ -31,7 +31,7 @@ defmodule Eva.Extension.ServerTest.RewriteTestModule do
 end
 
 defmodule Eva.Extension.ServerTest.BlockTestModule do
-  def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+  def setup(_ctx), do: {:ok, %Eva.Core.Extension.Spec{}}
 
   def init(_ctx) do
     {:ok, Eva.Extension.ServerTest.StateHolder.get() || %{}}
@@ -45,9 +45,13 @@ defmodule Eva.Extension.ServerTest.CommandTestModule do
   def setup(_ctx),
     do:
       {:ok,
-       %Eva.Extension.Spec{
+       %Eva.Core.Extension.Spec{
          commands: [
-           %Eva.Extension.Spec.Command{name: "hello", description: "greet", arg_hint: "[name]"}
+           %Eva.Core.Extension.Spec.Command{
+             name: "hello",
+             description: "greet",
+             arg_hint: "[name]"
+           }
          ]
        }}
 
@@ -64,9 +68,9 @@ end
 defmodule Eva.Extension.ServerTest.CommandTestModuleBadReturn do
   def setup(_ctx) do
     {:ok,
-     %Eva.Extension.Spec{
+     %Eva.Core.Extension.Spec{
        commands: [
-         %Eva.Extension.Spec.Command{name: "broken", description: "", arg_hint: ""}
+         %Eva.Core.Extension.Spec.Command{name: "broken", description: "", arg_hint: ""}
        ]
      }}
   end
@@ -79,9 +83,9 @@ end
 defmodule Eva.Extension.ServerTest.CommandTestModuleCrash do
   def setup(_ctx) do
     {:ok,
-     %Eva.Extension.Spec{
+     %Eva.Core.Extension.Spec{
        commands: [
-         %Eva.Extension.Spec.Command{name: "crash", description: "", arg_hint: ""}
+         %Eva.Core.Extension.Spec.Command{name: "crash", description: "", arg_hint: ""}
        ]
      }}
   end
@@ -92,7 +96,7 @@ defmodule Eva.Extension.ServerTest.CommandTestModuleCrash do
 end
 
 defmodule Eva.Extension.ServerTest.HandleRequestTestModule do
-  def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+  def setup(_ctx), do: {:ok, %Eva.Core.Extension.Spec{}}
 
   def init(_ctx) do
     {:ok, Eva.Extension.ServerTest.StateHolder.get() || %{}}
@@ -102,7 +106,7 @@ defmodule Eva.Extension.ServerTest.HandleRequestTestModule do
 end
 
 defmodule Eva.Extension.ServerTest.HandleRequestBadReturnTestModule do
-  def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+  def setup(_ctx), do: {:ok, %Eva.Core.Extension.Spec{}}
 
   def init(_ctx), do: {:ok, nil}
 
@@ -110,7 +114,7 @@ defmodule Eva.Extension.ServerTest.HandleRequestBadReturnTestModule do
 end
 
 defmodule Eva.Extension.ServerTest.HandleCastTestModule do
-  def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+  def setup(_ctx), do: {:ok, %Eva.Core.Extension.Spec{}}
 
   def init(_ctx) do
     {:ok, Eva.Extension.ServerTest.StateHolder.get() || %{}}
@@ -123,7 +127,7 @@ defmodule Eva.Extension.ServerTest.HandleCastTestModule do
 end
 
 defmodule Eva.Extension.ServerTest.HandleCastBadReturnTestModule do
-  def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+  def setup(_ctx), do: {:ok, %Eva.Core.Extension.Spec{}}
 
   def init(_ctx), do: {:ok, nil}
 
@@ -131,7 +135,7 @@ defmodule Eva.Extension.ServerTest.HandleCastBadReturnTestModule do
 end
 
 defmodule Eva.Extension.ServerTest.EventsTestModule do
-  def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+  def setup(_ctx), do: {:ok, %Eva.Core.Extension.Spec{}}
 
   def init(_ctx), do: {:ok, %{}}
 
@@ -140,7 +144,7 @@ defmodule Eva.Extension.ServerTest.EventsTestModule do
 end
 
 defmodule Eva.Extension.ServerTest.InitFailTestModule do
-  def setup(_ctx), do: {:ok, %Eva.Extension.Spec{}}
+  def setup(_ctx), do: {:ok, %Eva.Core.Extension.Spec{}}
 
   def init(_ctx), do: {:error, :init_failed}
 end
@@ -155,9 +159,9 @@ end
 defmodule Eva.Extension.ServerTest do
   use ExUnit.Case, async: false
 
-  alias Eva.Extension.{Server, Context, Spec}
-  alias Eva.Agent.{Messages, Tools}
-  alias Eva.Agent.Events, as: AgentEvents
+  alias Eva.Core.Extension.{Server, Context, Spec}
+  alias Eva.Core.Agent.{Messages, Tools}
+  alias Eva.Core.Agent.Events, as: AgentEvents
 
   setup do
     # The holder is linked to the test process, so the previous test's copy can still be
@@ -217,7 +221,7 @@ defmodule Eva.Extension.ServerTest do
 
       event = %AgentEvents.AgentStart{}
 
-      Eva.Bus.publish(self(), event)
+      Eva.Core.Bus.publish(self(), event)
       Process.sleep(50)
 
       state = :sys.get_state(pid)

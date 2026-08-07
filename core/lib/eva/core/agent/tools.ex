@@ -1,10 +1,10 @@
-defmodule Eva.Agent.Tools do
+defmodule Eva.Core.Agent.Tools do
   @moduledoc """
   Provider-neutral tool definitions and tool execution results.
   """
 
-  alias Eva.Agent.Messages
-  alias Eva.Agent.Events
+  alias Eva.Core.Agent.Messages
+  alias Eva.Core.Agent.Events
 
   defmodule AgentToolResult do
     @moduledoc """

@@ -9,12 +9,13 @@ defmodule Eva.Extension.Set do
 
   use TypedStruct
 
-  alias Eva.Agent.Tools
+  alias Eva.Core.Agent.Tools
   alias Eva.Coding.Resources
   alias Eva.Cluster
-  alias Eva.Extension.{Context, Hooks, Loader, Processes, Spec, Trust}
+  alias Eva.Core.Extension.{Context, Processes, Spec}
+  alias Eva.Extension.{Hooks, Loader, Trust}
   alias Eva.Extension.Loader.Loaded
-  alias Eva.Extension.Supervisor, as: ExtSupervisor
+  alias Eva.Core.Extension.Supervisor, as: ExtSupervisor
 
   # Instantiating reaches across a node boundary and runs the extension's `setup/1` and
   # `init/1`, which are the extension author's code — generous, but not unbounded.
@@ -171,7 +172,7 @@ defmodule Eva.Extension.Set do
               # location-transparent — `report_update/2` from the far side lands in the
               # Loop process here with nothing extra to arrange.
               case GenServer.call(
-                     {Eva.Extension.ToolRegistry, node},
+                     {Eva.Core.Extension.ToolRegistry, node},
                      {:run, name, set.session_pid, tool.name, arguments, exec_context},
                      :infinity
                    ) do
@@ -257,7 +258,7 @@ defmodule Eva.Extension.Set do
   Stopping an already-dead process is a no-op, so this is safe to call from the
   session's `:DOWN` handler as well as from an explicit disable.
   """
-  @spec drop(t(), String.t() | pid(), Eva.Extension.terminate_reason()) :: t()
+  @spec drop(t(), String.t() | pid(), Eva.Core.Extension.terminate_reason()) :: t()
   def drop(set, name, reason \\ :shutdown)
 
   def drop(%__MODULE__{} = set, name, reason) when is_binary(name) do
@@ -289,7 +290,7 @@ defmodule Eva.Extension.Set do
     end
   end
 
-  @spec shutdown(t(), Eva.Extension.terminate_reason()) :: :ok
+  @spec shutdown(t(), Eva.Core.Extension.terminate_reason()) :: :ok
   def shutdown(%__MODULE__{} = set, reason \\ :shutdown) do
     Enum.each(set.order, &stop_server(set, &1, reason))
     :ok
@@ -481,7 +482,7 @@ defmodule Eva.Extension.Set do
       # Not the host implementation the in-VM extensions get: that module's functions run
       # where they are called, and this extension is somewhere else. The remote one has the
       # same shape and forwards.
-      capabilities: Map.get(opts, :remote_capabilities, Eva.Extension.Capabilities.Remote)
+      capabilities: Map.get(opts, :remote_capabilities, Eva.Core.Extension.Capabilities.Remote)
     }
   end
 

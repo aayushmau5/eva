@@ -5,7 +5,7 @@ defmodule Eva.Agent.Session.State do
   """
 
   use TypedStruct
-  alias Eva.Agent.Messages
+  alias Eva.Core.Agent.Messages
   alias Eva.Agent.Session.{Entries, Tree}
 
   # Extension-written entries are namespaced `ext:<name>` so they cannot collide with
@@ -138,8 +138,8 @@ defmodule Eva.Agent.Session.State do
   @doc """
   Every extension's own entries, grouped by extension name, oldest first.
 
-  Written by `Eva.Extension.API.append_entry/2` and handed back through
-  `Eva.Extension.Context` so an extension can rebuild its state on resume. The
+  Written by `Eva.Core.Extension.API.append_entry/2` and handed back through
+  `Eva.Core.Extension.Context` so an extension can rebuild its state on resume. The
   The `ext:` prefix keeps these apart from the `extension` namespace core writes for
   enable/disable, so an extension can never read core's own bookkeeping as its state.
   """

@@ -1,8 +1,8 @@
 defmodule Eva.Extension.MCP.ToolAdapterTest do
   use ExUnit.Case, async: true
 
-  alias Eva.Agent.Messages
-  alias Eva.Agent.Tools
+  alias Eva.Core.Agent.Messages
+  alias Eva.Core.Agent.Tools
   alias Eva.Extension.MCP.{Config, ToolAdapter}
 
   defmodule MockServer do

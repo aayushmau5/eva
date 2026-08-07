@@ -1,10 +1,10 @@
-defmodule Eva.Extension.Node do
+defmodule Eva.Core.Extension.Node do
   @moduledoc """
   Runs this VM as an extension node: find Eva, announce, stay announced.
 
   Start it from your extension's own application and `mix run --no-halt` is all you need.
 
-      children = [{Eva.Extension.Node, name: "mcp", module: Eva.Extension.MCP}]
+      children = [{Eva.Core.Extension.Node, name: "mcp", module: Eva.Extension.MCP}]
 
   Eva does not start this VM and does not own it. That is the point: an extension node is
   an ordinary Mix project with ordinary dependencies, and in development it is an
@@ -27,15 +27,15 @@ defmodule Eva.Extension.Node do
 
   require Logger
 
-  alias Eva.Cluster.{Discovery, Protocol}
-  alias Eva.Extension.{Context, Spec, Supervisor, ToolRegistry}
+  alias Eva.Core.Cluster.{Discovery, Protocol}
+  alias Eva.Core.Extension.{Context, Spec, Supervisor, ToolRegistry}
 
   @initial_backoff 500
   @max_backoff 30_000
 
   @typedoc """
   * `:name` — the extension's name, which must match its module's namespace
-  * `:module` — the module with `use Eva.Extension`
+  * `:module` — the module with `use Eva.Core.Extension`
   * `:eva_node` — skip discovery and announce to this node
   """
   @type option ::

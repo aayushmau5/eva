@@ -40,9 +40,9 @@ end
 
 defmodule CommandExtension do
   @moduledoc """
-  Stands in for an extension's `Eva.Extension.Server`, answering every command the same way.
+  Stands in for an extension's `Eva.Core.Extension.Server`, answering every command the same way.
 
-  Registers itself under the session's key in `Eva.Extension.Processes`, because that registry
+  Registers itself under the session's key in `Eva.Core.Extension.Processes`, because that registry
   is how `Eva.Extension.Set` finds an extension's process — a pid handed over any other way
   would never be looked up.
   """
@@ -54,7 +54,7 @@ defmodule CommandExtension do
 
   @impl true
   def init({session_pid, name, reply}) do
-    {:ok, _} = Registry.register(Eva.Extension.Processes, {session_pid, name}, nil)
+    {:ok, _} = Registry.register(Eva.Core.Extension.Processes, {session_pid, name}, nil)
     {:ok, reply}
   end
 
@@ -64,12 +64,12 @@ end
 
 defmodule RemoteExtension do
   @moduledoc """
-  Stands in for an `Eva.Extension.Node` on another VM: it answers `:instantiate` with a spec,
+  Stands in for an `Eva.Core.Extension.Node` on another VM: it answers `:instantiate` with a spec,
   which is all `Eva.Extension.Set.add_member/4` asks of it.
   """
   use GenServer
 
-  alias Eva.Extension.Spec
+  alias Eva.Core.Extension.Spec
 
   def start_link, do: GenServer.start_link(__MODULE__, :ok)
 
@@ -89,8 +89,8 @@ defmodule Eva.Coding.SessionTest do
 
   alias Eva.Agent.Session.{Storage, Entries}
   alias Eva.Agent.Session.State, as: SessionState
-  alias Eva.Agent.Messages
-  alias Eva.Agent.Events, as: AgentEvents
+  alias Eva.Core.Agent.Messages
+  alias Eva.Core.Agent.Events, as: AgentEvents
   alias Eva.Coding.SessionIndexManager
   alias Eva.Coding.Paths
 
@@ -135,7 +135,7 @@ defmodule Eva.Coding.SessionTest do
     alias Eva.Agent.Session.Storage
 
     # These used to be written through `append_mcp_toggle/3`. MCP is an extension now and
-    # writes through `Eva.Extension.API.append_entry/2`, which lands here — so the entry
+    # writes through `Eva.Core.Extension.API.append_entry/2`, which lands here — so the entry
     # mechanics are still core's, and still worth pinning down.
     defp append_toggle(state, server, enabled) do
       Session.append_custom_entry(state, "ext:mcp", %{
@@ -1081,7 +1081,7 @@ defmodule Eva.Coding.SessionTest do
       extensions = %Eva.Extension.Set{
         session_pid: self(),
         order: ["fixture"],
-        specs: %{"fixture" => %Eva.Extension.Spec{}},
+        specs: %{"fixture" => %Eva.Core.Extension.Spec{}},
         members: %{"fixture" => %{name: "fixture", node: node()}}
       }
 
@@ -1136,7 +1136,7 @@ defmodule Eva.Coding.SessionTest do
       assert content == "github  connected  12 tools"
     end
 
-    # The `handle_command/3` that `use Eva.Extension` injects answers with exactly this, so it is
+    # The `handle_command/3` that `use Eva.Core.Extension` injects answers with exactly this, so it is
     # what a command declared in `setup/1` but never implemented shows the user.
     test "an error reads as a sentence" do
       state = command_state({:error, :not_implemented})
@@ -1176,8 +1176,8 @@ defmodule Eva.Coding.SessionTest do
         session_pid: self(),
         order: ["ext1"],
         specs: %{
-          "ext1" => %Eva.Extension.Spec{
-            commands: [%Eva.Extension.Spec.Command{name: "cmd", description: "a command"}]
+          "ext1" => %Eva.Core.Extension.Spec{
+            commands: [%Eva.Core.Extension.Spec.Command{name: "cmd", description: "a command"}]
           }
         }
       }
@@ -1238,7 +1238,7 @@ defmodule Eva.Coding.SessionTest do
     # handlers directly and skip setup, so they have to do it themselves — `forward_event/2`
     # publishes to `{:eva_session, self(), class}` and nobody would be listening otherwise.
     if config.listener_pid do
-      Eva.Bus.subscribe_pid(config.listener_pid, self(), Eva.Bus.classes())
+      Eva.Core.Bus.subscribe_pid(config.listener_pid, self(), Eva.Core.Bus.classes())
     end
 
     struct(

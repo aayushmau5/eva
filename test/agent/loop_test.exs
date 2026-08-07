@@ -1,7 +1,8 @@
 defmodule Eva.Agent.LoopTest do
   use ExUnit.Case, async: true
 
-  alias Eva.Agent.{Loop, Events, Messages, Tools}
+  alias Eva.Agent.Loop
+  alias Eva.Core.Agent.{Events, Messages, Tools}
   alias Eva.AI.Events, as: AIEvents
   alias Eva.Test.{MockProvider, MockHarness}
 

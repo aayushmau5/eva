@@ -7,7 +7,7 @@ defmodule Eva.Coding.SessionName do
   alias Eva.AI.OpenAICompatibleProvider
   alias Eva.AI.Config, as: ProviderConfig
 
-  alias Eva.Agent.Messages
+  alias Eva.Core.Agent.Messages
 
   @session_name_system_prompt """
   You write concise coding-agent session names. Reply with only a short title,

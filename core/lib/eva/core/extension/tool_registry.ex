@@ -1,4 +1,4 @@
-defmodule Eva.Extension.ToolRegistry do
+defmodule Eva.Core.Extension.ToolRegistry do
   @moduledoc """
   Keeps tool executors on the node that defined them, and runs them there on request.
 
@@ -7,9 +7,9 @@ defmodule Eva.Extension.ToolRegistry do
   extension's modules are its own — that is the entire point of running it on its own node
   — so a `%AgentTool{executor: fn ... end}` sent to the host fails with `badfun`.
 
-  So the closure never leaves. `Eva.Extension.API.update_tools/2` puts it here and sends
+  So the closure never leaves. `Eva.Core.Extension.API.update_tools/2` puts it here and sends
   the host a description with `executor: nil`; the host binds a proxy of its own that calls
-  back to `{Eva.Extension.ToolRegistry, node}`. The extension author writes
+  back to `{Eva.Core.Extension.ToolRegistry, node}`. The extension author writes
   `executor: fn args, ctx -> ... end` and none of this is visible to them.
 
   ## Keyed by session
@@ -28,7 +28,7 @@ defmodule Eva.Extension.ToolRegistry do
 
   use GenServer
 
-  alias Eva.Agent.Tools
+  alias Eva.Core.Agent.Tools
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do

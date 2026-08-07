@@ -1,7 +1,8 @@
 defmodule Eva.Agent.HarnessTest do
   use ExUnit.Case, async: true
 
-  alias Eva.Agent.{Harness, Messages, Tools}
+  alias Eva.Agent.Harness
+  alias Eva.Core.Agent.{Messages, Tools}
   alias Eva.AI.Events, as: AIEvents
   alias Eva.Test.MockProvider
 

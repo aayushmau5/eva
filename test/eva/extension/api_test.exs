@@ -1,8 +1,8 @@
 defmodule Eva.Extension.ApiTest do
   use ExUnit.Case, async: true
 
-  alias Eva.Extension.{API, Context}
-  alias Eva.Agent.Messages
+  alias Eva.Core.Extension.{API, Context}
+  alias Eva.Core.Agent.Messages
 
   defp build_context(attrs \\ []) do
     %Context{

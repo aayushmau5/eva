@@ -1,7 +1,7 @@
 defmodule Eva.Extension.MCP.ServersTest do
   use ExUnit.Case, async: false
 
-  alias Eva.Agent.Tools
+  alias Eva.Core.Agent.Tools
   alias Eva.Extension.MCP.Config.Paths
   alias Eva.Extension.MCP.{Config, Events, Servers, ToolAdapter}
 

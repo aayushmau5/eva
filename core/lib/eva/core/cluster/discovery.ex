@@ -1,4 +1,4 @@
-defmodule Eva.Cluster.Discovery do
+defmodule Eva.Core.Cluster.Discovery do
   @moduledoc """
   Finding the other Eva VMs on this machine, with nobody writing down where they are.
 
@@ -17,9 +17,9 @@ defmodule Eva.Cluster.Discovery do
   a time, so reaching another machine is not supported yet.
   """
 
-  alias Eva.Cluster.Protocol
+  alias Eva.Core.Cluster.Protocol
 
-  # Matches the host in the node names `Eva.Cluster.Distribution` and `Eva.Extension.Node`
+  # Matches the host in the node names `Eva.Cluster.Distribution` and `Eva.Core.Extension.Node`
   # generate. Change one, change all three.
   @host ~c"127.0.0.1"
 
@@ -50,11 +50,11 @@ defmodule Eva.Cluster.Discovery do
 
   That distinction is the point: a node that is up but attached to nothing looks exactly
   like a node that never started, and only one of those is a problem you can act on. Ask
-  `Eva.Extension.Node.status/0` on the result to tell them apart.
+  `Eva.Core.Extension.Node.status/0` on the result to tell them apart.
   """
   @spec extension_nodes() :: [node()]
   def extension_nodes do
-    discover(&String.starts_with?(&1, @extension_prefix), Eva.Extension.Node)
+    discover(&String.starts_with?(&1, @extension_prefix), Eva.Core.Extension.Node)
   end
 
   @doc """
@@ -77,7 +77,7 @@ defmodule Eva.Cluster.Discovery do
   """
   @spec status(node()) :: map() | nil
   def status(node) do
-    :erpc.call(node, Eva.Extension.Node, :status, [], @timeout)
+    :erpc.call(node, Eva.Core.Extension.Node, :status, [], @timeout)
   catch
     # Gone between being listed and being asked, or too old to answer.
     _kind, _reason -> nil

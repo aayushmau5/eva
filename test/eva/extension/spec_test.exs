@@ -1,7 +1,7 @@
 defmodule Eva.Extension.SpecTest do
   use ExUnit.Case, async: true
 
-  alias Eva.Extension.Spec
+  alias Eva.Core.Extension.Spec
 
   describe "stateful?/1" do
     test "returns false when all callback triggers are empty" do

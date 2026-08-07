@@ -2,7 +2,7 @@ defmodule Eva.Coding.Skills do
   use TypedStruct
 
   alias Eva.Coding.Resources
-  alias Eva.Agent.Utils
+  alias Eva.Core.Agent.Utils
 
   typedstruct do
     field :name, String.t(), enforce: true

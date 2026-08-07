@@ -7,7 +7,7 @@ defmodule Eva.Cluster.DiscoveryTest do
 
   use ExUnit.Case, async: false
 
-  alias Eva.Cluster.Discovery
+  alias Eva.Core.Cluster.Discovery
 
   # Not tagged `:distributed`, so this runs in the ordinary suite — where the VM is
   # `nonode@nohost`. A VM that is not a node cannot connect to one, and answering "nobody

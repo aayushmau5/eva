@@ -1,9 +1,9 @@
-defmodule Eva.Agent.Messages do
+defmodule Eva.Core.Agent.Messages do
   @moduledoc """
   Message types. Common between Agent & AI module.
   """
 
-  alias Eva.Agent.Utils
+  alias Eva.Core.Agent.Utils
 
   @type user_content :: String.t() | [TextContent.t() | ImageContent.t()]
   @type assistant_content :: TextContent.t() | ThinkingContent.t() | ToolCall.t()
@@ -98,16 +98,16 @@ defmodule Eva.Agent.Messages do
     A message authored by the user.
     """
     use TypedStruct
-    alias Eva.Agent.Utils
+    alias Eva.Core.Agent.Utils
 
     typedstruct do
       field :role, String.t(), default: "user"
-      field :content, Eva.Agent.Messages.user_content()
+      field :content, Eva.Core.Agent.Messages.user_content()
       field :timestamp, integer(), default: Utils.current_timestamp_ms()
     end
 
     def text(%__MODULE__{content: content}) do
-      Eva.Agent.Messages.content_text(content)
+      Eva.Core.Agent.Messages.content_text(content)
     end
   end
 
@@ -128,7 +128,7 @@ defmodule Eva.Agent.Messages do
     typedstruct do
       field :type, String.t()
       field :timestamp, integer(), default: Utils.current_timestamp_ms()
-      field :error, Eva.Agent.Messages.AssistantDiagnosticError.t()
+      field :error, Eva.Core.Agent.Messages.AssistantDiagnosticError.t()
       field :details, map()
     end
   end
@@ -138,7 +138,7 @@ defmodule Eva.Agent.Messages do
     A message authored by the assistant with ordered content block.
     """
     use TypedStruct
-    alias Eva.Agent.Messages
+    alias Eva.Core.Agent.Messages
 
     @type stop_reason :: :stop | :length | :tool_use | :error | :aborted
 
@@ -197,16 +197,16 @@ defmodule Eva.Agent.Messages do
       field :role, String.t(), default: "tool_result"
       field :tool_call_id, String.t()
       field :tool_name, String.t()
-      field :content, [Eva.Agent.Messages.tool_result_content()], default: []
+      field :content, [Eva.Core.Agent.Messages.tool_result_content()], default: []
       field :details, map(), default: nil
       field :added_tool_names, [String.t()], default: nil
       field :is_error, boolean(), default: false
-      field :timestamp, integer(), default: Eva.Agent.Utils.current_timestamp_ms()
+      field :timestamp, integer(), default: Eva.Core.Agent.Utils.current_timestamp_ms()
     end
 
     @spec text(t()) :: String.t()
     def text(%__MODULE__{content: content}) do
-      Eva.Agent.Messages.content_text(content)
+      Eva.Core.Agent.Messages.content_text(content)
     end
   end
 
@@ -232,7 +232,7 @@ defmodule Eva.Agent.Messages do
     typedstruct do
       field :role, String.t(), default: "custom"
       field :custom_type, String.t()
-      field :content, Eva.Agent.Messages.user_content()
+      field :content, Eva.Core.Agent.Messages.user_content()
       field :display, boolean(), default: true
       field :details, map()
       field :timestamp, integer(), default: Utils.current_timestamp_ms()
@@ -240,7 +240,7 @@ defmodule Eva.Agent.Messages do
 
     @spec text(t()) :: String.t()
     def text(%__MODULE__{content: content}) do
-      Eva.Agent.Messages.content_text(content)
+      Eva.Core.Agent.Messages.content_text(content)
     end
   end
 

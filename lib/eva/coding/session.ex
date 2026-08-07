@@ -11,9 +11,9 @@ defmodule Eva.Coding.Session do
   alias Eva.Agent.Session.{Storage, Entries}
   alias Eva.Agent.Session.State, as: SessionState
   alias Eva.Agent.Harness
-  alias Eva.Agent.Events, as: AgentEvents
-  alias Eva.Agent.Tools, as: AgentTools
-  alias Eva.Agent.Messages
+  alias Eva.Core.Agent.Events, as: AgentEvents
+  alias Eva.Core.Agent.Tools, as: AgentTools
+  alias Eva.Core.Agent.Messages
 
   alias Eva.Extension.Hooks, as: ExtensionHooks
   alias Eva.Extension.Set, as: ExtensionSet
@@ -105,12 +105,12 @@ defmodule Eva.Coding.Session do
     "lm_studio"
   end
 
-  @spec tools(pid()) :: [Eva.Agent.Tools.tool()]
+  @spec tools(pid()) :: [Eva.Core.Agent.Tools.tool()]
   def tools(pid) do
     GenServer.call(pid, :tools)
   end
 
-  @spec messages(pid()) :: [Eva.Agent.Messages.t()]
+  @spec messages(pid()) :: [Eva.Core.Agent.Messages.t()]
   def messages(pid) do
     GenServer.call(pid, :messages)
   end
@@ -187,7 +187,9 @@ defmodule Eva.Coding.Session do
   @doc """
   Extension-registered commands, as `%{command_name => {extension_name, command}}`.
   """
-  @spec extension_commands(pid()) :: %{String.t() => {String.t(), Eva.Extension.Spec.Command.t()}}
+  @spec extension_commands(pid()) :: %{
+          String.t() => {String.t(), Eva.Core.Extension.Spec.Command.t()}
+        }
   def extension_commands(pid) do
     GenServer.call(pid, :extension_commands)
   end
@@ -308,7 +310,7 @@ defmodule Eva.Coding.Session do
     # Subscribe the listener to the event bus
     # TODO: move this out and let listeners subscribe
     if config.listener_pid do
-      Eva.Bus.subscribe_pid(config.listener_pid, self(), Eva.Bus.classes())
+      Eva.Core.Bus.subscribe_pid(config.listener_pid, self(), Eva.Core.Bus.classes())
     end
 
     # An extension node started after this session is the normal case, not an edge one —
@@ -625,7 +627,7 @@ defmodule Eva.Coding.Session do
   def handle_info({:cluster_member_up, _member}, state), do: {:noreply, state}
   def handle_info({:cluster_member_down, _member}, state), do: {:noreply, state}
 
-  # -- Messages from extensions (see `Eva.Extension.API`) --
+  # -- Messages from extensions (see `Eva.Core.Extension.API`) --
   #
   # All 3- and 4-tuples, so none of them can be caught by the bash `{ref, result}` clause
   # further down, which only matches 2-tuples.
@@ -1113,7 +1115,7 @@ defmodule Eva.Coding.Session do
   end
 
   defp forward_event(_state, event) do
-    Eva.Bus.publish(self(), event)
+    Eva.Core.Bus.publish(self(), event)
   end
 
   defp write_pending_initial_entries(%__MODULE__{} = state) do
@@ -1205,7 +1207,7 @@ defmodule Eva.Coding.Session do
       cancelled: result.cancelled,
       truncated: truncation.truncated,
       full_output_path: full_output_path,
-      timestamp: Eva.Agent.Utils.current_timestamp_ms(),
+      timestamp: Eva.Core.Agent.Utils.current_timestamp_ms(),
       exclude_from_context: run.private?
     }
   end

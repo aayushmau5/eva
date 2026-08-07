@@ -16,12 +16,12 @@ defmodule Eva.Extension.Package do
 
   ## Nodes are asked about themselves
 
-  An extension node is found through `Eva.Cluster.Discovery` and asked what it is. That
+  An extension node is found through `Eva.Core.Cluster.Discovery` and asked what it is. That
   works with no Eva running at all, which is the case `mix eva.ext.stop` most needs to
   handle, and it does not care how many Evas there are.
   """
 
-  alias Eva.Cluster.Discovery
+  alias Eva.Core.Cluster.Discovery
   alias Eva.Coding.Resources
   alias Eva.Extension.Registry
 
@@ -176,7 +176,7 @@ defmodule Eva.Extension.Package do
   end
 
   # Keyed by the name the node reports rather than the one in its node name, for the reason
-  # `Eva.Cluster.Discovery.extension_node/1` gives: prefixes cannot tell `mcp` from `mcp_2`.
+  # `Eva.Core.Cluster.Discovery.extension_node/1` gives: prefixes cannot tell `mcp` from `mcp_2`.
   defp running_by_name do
     for node <- Discovery.extension_nodes(),
         status = Discovery.status(node),

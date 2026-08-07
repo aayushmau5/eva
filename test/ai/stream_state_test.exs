@@ -2,7 +2,7 @@ defmodule Eva.AI.StreamStateTest do
   use ExUnit.Case
 
   alias Eva.AI.StreamState
-  alias Eva.Agent.Messages.ToolCall
+  alias Eva.Core.Agent.Messages.ToolCall
 
   describe "feed/2" do
     test "accumulates content across multiple data chunks" do

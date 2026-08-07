@@ -6,7 +6,7 @@ defmodule Eva.Extension.Registry do
   an explicit command, which is also its trust model — nothing here is picked up by
   cloning a repository.
 
-  > Not to be confused with `Eva.Extension.Processes`, which is an actual `Registry` of
+  > Not to be confused with `Eva.Core.Extension.Processes`, which is an actual `Registry` of
   > running extension processes. This is a JSON file.
 
   Each entry:

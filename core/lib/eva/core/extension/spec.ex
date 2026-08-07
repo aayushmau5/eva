@@ -1,11 +1,11 @@
-defmodule Eva.Extension.Spec do
+defmodule Eva.Core.Extension.Spec do
   @moduledoc """
   The contract between an extension and Eva.
   """
 
   use TypedStruct
 
-  alias Eva.Agent.Tools
+  alias Eva.Core.Agent.Tools
 
   typedstruct do
     # Extensions can have tools
@@ -22,7 +22,7 @@ defmodule Eva.Extension.Spec do
     field :hooks, [:tool_call | :tool_result | :input | :context], default: []
 
     # The event classes this extension is concerned with(does it only need :mcp events or :extension events)
-    field :event_classes, [Eva.Bus.classes()], default: []
+    field :event_classes, [Eva.Core.Bus.classes()], default: []
   end
 
   typedstruct module: Command do

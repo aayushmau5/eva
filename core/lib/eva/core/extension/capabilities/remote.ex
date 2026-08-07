@@ -1,4 +1,4 @@
-defmodule Eva.Extension.Capabilities.Remote do
+defmodule Eva.Core.Extension.Capabilities.Remote do
   @moduledoc """
   The capability half an extension gets when it runs on its own node.
 

@@ -11,7 +11,7 @@ defmodule Eva.Extension.MCP.Application do
   purpose: a server is shared by every session using it, refcounted through `:pg`, and
   outlives any one session's extension instance.
 
-  `Eva.Extension.Node` is what makes this VM an extension: it finds Eva, announces `mcp`,
+  `Eva.Core.Extension.Node` is what makes this VM an extension: it finds Eva, announces `mcp`,
   and keeps announcing across Eva restarts. `mix run --no-halt` here is the whole
   operational story — nothing starts this node but you.
   """
@@ -25,7 +25,7 @@ defmodule Eva.Extension.MCP.Application do
       {Task.Supervisor, name: Eva.Extension.MCP.TaskSupervisor},
       {Registry, keys: :unique, name: Eva.Extension.MCP.Registry},
       Eva.Extension.MCP.Supervisor,
-      {Eva.Extension.Node, node_options()}
+      {Eva.Core.Extension.Node, node_options()}
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__.Supervisor)

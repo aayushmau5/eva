@@ -11,14 +11,14 @@ defmodule Eva.Extension.TrustTest do
     path
   end
 
-  defp module_for(name), do: Eva.Extension.namespace(name)
+  defp module_for(name), do: Eva.Core.Extension.namespace(name)
 
   defp extension(name) do
     ~s'''
     defmodule #{inspect(module_for(name))} do
-      use Eva.Extension
+      use Eva.Core.Extension
 
-      def setup(_ctx), do: {:ok, %Eva.Extension.Spec{guidelines: ["from #{name}"]}}
+      def setup(_ctx), do: {:ok, %Eva.Core.Extension.Spec{guidelines: ["from #{name}"]}}
     end
     '''
   end

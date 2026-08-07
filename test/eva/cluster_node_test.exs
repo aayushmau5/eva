@@ -13,7 +13,8 @@ defmodule Eva.ClusterNodeTest do
 
   alias Eva.Cluster
   alias Eva.Coding.Resources
-  alias Eva.Extension.{Context, Set}
+  alias Eva.Core.Extension.Context
+  alias Eva.Extension.Set
   alias Eva.Test.ClusterNode
 
   setup_all do
@@ -51,7 +52,7 @@ defmodule Eva.ClusterNodeTest do
     assert_receive {:cluster_member_up, member}, 5_000
     assert member.name == "fixture"
     assert member.node == remote.node
-    assert member.core_version == Eva.Cluster.Protocol.core_version()
+    assert member.core_version == Eva.Core.Cluster.Protocol.core_version()
 
     assert [^member] = Cluster.members(:extension)
   end
@@ -227,9 +228,9 @@ defmodule Eva.ClusterSetTest do
     end
 
     defmodule Eva.Extension.Fixture do
-      use Eva.Extension
+      use Eva.Core.Extension
 
-      def setup(_ctx), do: {:ok, %Eva.Extension.Spec{guidelines: ["the local one"]}}
+      def setup(_ctx), do: {:ok, %Eva.Core.Extension.Spec{guidelines: ["the local one"]}}
     end
     """)
 
@@ -290,7 +291,7 @@ defmodule Eva.ClusterToolsTest do
   @moduletag :distributed
   @moduletag timeout: 120_000
 
-  alias Eva.Agent.Tools
+  alias Eva.Core.Agent.Tools
   alias Eva.Cluster
   alias Eva.Coding.Resources
   alias Eva.Extension.Set
@@ -334,7 +335,7 @@ defmodule Eva.ClusterToolsTest do
     assert is_function(tool.executor, 2)
 
     # It is still registered over there, keyed by this session.
-    assert ClusterNode.call(remote, Eva.Extension.ToolRegistry, :tools, ["fixture", self()]) ==
+    assert ClusterNode.call(remote, Eva.Core.Extension.ToolRegistry, :tools, ["fixture", self()]) ==
              ["fixture_echo"]
   end
 
@@ -446,7 +447,7 @@ defmodule Eva.ClusterCapabilitiesTest do
 
   test "a remote extension gets the remote implementation", %{pid: pid} do
     assert GenServer.call(pid, {:extension_request, :capabilities_module}) ==
-             {:ok, Eva.Extension.Capabilities.Remote}
+             {:ok, Eva.Core.Extension.Capabilities.Remote}
   end
 
   test "asking runs on the host and the answer comes back", %{pid: pid} do
@@ -470,7 +471,7 @@ defmodule Eva.ClusterCapabilitiesTest do
     # `ask/3` has to answer something, and the default is the same answer a host with no
     # frontend attached would give.
     answer =
-      ClusterNode.call(remote, Eva.Extension.Capabilities.Remote, :ask, [
+      ClusterNode.call(remote, Eva.Core.Extension.Capabilities.Remote, :ask, [
         %{kind: :confirm},
         :fallback,
         [session_pid: dead_pid]

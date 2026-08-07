@@ -1,9 +1,9 @@
-defmodule Eva.Extension.Supervisor do
+defmodule Eva.Core.Extension.Supervisor do
   use DynamicSupervisor
 
-  alias Eva.Extension.Server
-  alias Eva.Extension.Spec
-  alias Eva.Extension.Context
+  alias Eva.Core.Extension.Server
+  alias Eva.Core.Extension.Spec
+  alias Eva.Core.Extension.Context
 
   def start_link(_) do
     DynamicSupervisor.start_link(__MODULE__, [], name: __MODULE__)
@@ -25,7 +25,7 @@ defmodule Eva.Extension.Supervisor do
   @doc """
   Stops an extension.
   """
-  @spec stop_extension(pid(), Eva.Extension.terminate_reason()) :: :ok | {:error, :not_found}
+  @spec stop_extension(pid(), Eva.Core.Extension.terminate_reason()) :: :ok | {:error, :not_found}
   def stop_extension(pid, reason \\ :shutdown) when is_pid(pid) do
     GenServer.call(pid, {:stop, reason}, 5_000)
   catch

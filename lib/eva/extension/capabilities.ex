@@ -29,9 +29,9 @@ defmodule Eva.Extension.Capabilities do
   `provider_config` comes from the `Context` — a child inherits the parent's provider
   and, unless told otherwise, its model.
   """
-  @spec spawn_agent(Eva.Extension.Context.t(), map()) ::
+  @spec spawn_agent(Eva.Core.Extension.Context.t(), map()) ::
           {:ok, reference(), pid()} | {:error, term()}
-  def spawn_agent(%Eva.Extension.Context{} = ctx, opts) do
+  def spawn_agent(%Eva.Core.Extension.Context{} = ctx, opts) do
     ref = make_ref()
 
     opts =
@@ -51,6 +51,6 @@ defmodule Eva.Extension.Capabilities do
   @doc """
   Stops a child agent.
   """
-  @spec stop_agent(Eva.Extension.Context.t(), reference()) :: :ok
-  def stop_agent(%Eva.Extension.Context{}, ref), do: Eva.Extension.AgentRunner.stop(ref)
+  @spec stop_agent(Eva.Core.Extension.Context.t(), reference()) :: :ok
+  def stop_agent(%Eva.Core.Extension.Context{}, ref), do: Eva.Extension.AgentRunner.stop(ref)
 end

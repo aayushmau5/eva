@@ -7,7 +7,7 @@ defmodule Eva.Extension.Fixture do
   by a second VM, which is the whole situation being tested.
   """
 
-  use Eva.Extension
+  use Eva.Core.Extension
 
   @impl true
   def setup(ctx) do

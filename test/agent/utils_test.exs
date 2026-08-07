@@ -1,9 +1,9 @@
 defmodule Eva.Agent.UtilsTest do
   use ExUnit.Case, async: true
 
-  alias Eva.Agent.Messages
+  alias Eva.Core.Agent.Messages
   alias Eva.Agent.Session.Entries.SessionIndexEntry
-  alias Eva.Agent.Utils
+  alias Eva.Core.Agent.Utils
 
   describe "to_struct/2" do
     test "reads string keys into the matching fields" do

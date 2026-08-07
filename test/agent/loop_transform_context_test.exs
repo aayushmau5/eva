@@ -2,7 +2,8 @@ defmodule Eva.Agent.LoopTransformContextTest do
   use ExUnit.Case, async: true
 
   alias Eva.AI.Events, as: AIEvents
-  alias Eva.Agent.{Loop, Messages, Tools}
+  alias Eva.Agent.Loop
+  alias Eva.Core.Agent.{Messages, Tools}
   alias Eva.Test.{MockHarness, MockProvider}
 
   describe "transform_context" do

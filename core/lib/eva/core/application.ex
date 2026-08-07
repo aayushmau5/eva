@@ -15,11 +15,11 @@ defmodule Eva.Core.Application do
   def start(_type, _args) do
     children = [
       %{id: :pg, start: {:pg, :start_link, [Eva.PG]}},
-      {Registry, keys: :unique, name: Eva.Extension.Processes},
-      Eva.Extension.Supervisor,
+      {Registry, keys: :unique, name: Eva.Core.Extension.Processes},
+      Eva.Core.Extension.Supervisor,
       # Only used when the session is on another node, but starting it unconditionally
       # costs one idle process and saves every caller a conditional.
-      Eva.Extension.ToolRegistry
+      Eva.Core.Extension.ToolRegistry
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__.Supervisor)

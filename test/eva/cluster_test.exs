@@ -10,8 +10,8 @@ defmodule Eva.ClusterTest do
   use ExUnit.Case, async: false
 
   alias Eva.Cluster
-  alias Eva.Cluster.Protocol
-  alias Eva.Cluster.Protocol.Announcement
+  alias Eva.Core.Cluster.Protocol
+  alias Eva.Core.Cluster.Protocol.Announcement
   alias Eva.Coding.Resources
   alias Eva.Extension.Registry
 

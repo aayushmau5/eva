@@ -1,4 +1,4 @@
-defmodule Eva.Extension do
+defmodule Eva.Core.Extension do
   @moduledoc """
   The contract between Eva and extension.
   The extension file lives as an elixir script(.exs).
@@ -7,7 +7,7 @@ defmodule Eva.Extension do
 
   Usage:
   ```
-  use Eva.Extension
+  use Eva.Core.Extension
 
   def setup(ctx) do
     spec = %Spec{
@@ -41,7 +41,7 @@ defmodule Eva.Extension do
     field :capabilities, module()
   end
 
-  @callback setup(Context.t()) :: {:ok, Eva.Extension.Spec.t()} | {:error, term()}
+  @callback setup(Context.t()) :: {:ok, Eva.Core.Extension.Spec.t()} | {:error, term()}
   @callback init(Context.t()) :: {:ok, state :: term()} | {:error, term()}
   @callback handle_event(event :: struct(), state :: term()) ::
               {:ok, state :: term()}
@@ -113,10 +113,10 @@ defmodule Eva.Extension do
               "got #{inspect(__MODULE__)}"
       end
 
-      @behaviour Eva.Extension
+      @behaviour Eva.Core.Extension
 
-      alias Eva.Extension.{Spec, API, Agents}
-      alias Eva.Agent.{Messages, Tools}
+      alias Eva.Core.Extension.{Spec, API, Agents}
+      alias Eva.Core.Agent.{Messages, Tools}
 
       @doc false
       def __eva_extension__, do: true

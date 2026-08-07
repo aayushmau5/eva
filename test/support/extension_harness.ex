@@ -7,7 +7,7 @@ defmodule Eva.Test.ExtensionHarness do
   provider, or model.
   """
 
-  alias Eva.Extension.{Context, Spec, Supervisor}
+  alias Eva.Core.Extension.{Context, Spec, Supervisor}
 
   defstruct [:module, :pid, :session, :context, :spec]
 

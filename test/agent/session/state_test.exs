@@ -69,7 +69,7 @@ defmodule Eva.Agent.Session.StateTest do
   defp message(text) do
     Entries.Message.new(%{
       parent_id: nil,
-      message: %Eva.Agent.Messages.UserMessage{content: text}
+      message: %Eva.Core.Agent.Messages.UserMessage{content: text}
     })
   end
 

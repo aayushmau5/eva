@@ -1,9 +1,9 @@
-defmodule Eva.Cluster.Protocol do
+defmodule Eva.Core.Cluster.Protocol do
   @moduledoc """
   What a node says when it joins, and what it can be told in reply.
 
   Both halves compile against this: the host runs the directory, the joining node runs the
-  client, and neither names a module belonging to the other. As with `Eva.Extension.API`,
+  client, and neither names a module belonging to the other. As with `Eva.Core.Extension.API`,
   **the shapes here are the contract** — changing one is a breaking change even when the
   function signature stays the same.
 
@@ -42,7 +42,7 @@ defmodule Eva.Cluster.Protocol do
     """
 
     field :protocol_version, pos_integer()
-    field :role, Eva.Cluster.Protocol.role()
+    field :role, Eva.Core.Cluster.Protocol.role()
     field :name, String.t()
     field :core_version, String.t()
     field :node, node()

@@ -2,7 +2,7 @@ defmodule Eva.AI.LmStudioTest do
   use ExUnit.Case
 
   alias Eva.AI.{Events, OpenAICompatibleProvider, Config.OpenAICompatible}
-  alias Eva.Agent
+  alias Eva.Core.Agent
 
   describe "GenServer lifecycle" do
     test "starts with default config" do

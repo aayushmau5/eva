@@ -20,23 +20,23 @@ defmodule Eva.Extension.SetTest do
 
   # An extension's module has to match its name, so the file, the name Set knows it by,
   # and the module all derive from one string.
-  defp module_for(name), do: Eva.Extension.namespace(name)
+  defp module_for(name), do: Eva.Core.Extension.namespace(name)
 
   defp tools_only_extension(name, tool_name) do
     ~s'''
     defmodule #{inspect(module_for(name))} do
-      use Eva.Extension
+      use Eva.Core.Extension
 
       def setup(_ctx) do
-        {:ok, %Eva.Extension.Spec{
+        {:ok, %Eva.Core.Extension.Spec{
           tools: [
-            %Eva.Agent.Tools.AgentTool{
+            %Eva.Core.Agent.Tools.AgentTool{
               name: "#{tool_name}",
               description: "A test tool",
               input_schema: %{type: "object", properties: %{}},
               executor: fn _args, _ctx ->
-                %Eva.Agent.Tools.AgentToolResult{
-                  content: [%Eva.Agent.Messages.TextContent{text: "result"}]
+                %Eva.Core.Agent.Tools.AgentToolResult{
+                  content: [%Eva.Core.Agent.Messages.TextContent{text: "result"}]
                 }
               end
             }
@@ -50,10 +50,10 @@ defmodule Eva.Extension.SetTest do
   defp guideline_extension(name) do
     ~s'''
     defmodule #{inspect(module_for(name))} do
-      use Eva.Extension
+      use Eva.Core.Extension
 
       def setup(_ctx) do
-        {:ok, %Eva.Extension.Spec{
+        {:ok, %Eva.Core.Extension.Spec{
           guidelines: ["Always use types", "Write tests first"]
         }}
       end
@@ -64,14 +64,14 @@ defmodule Eva.Extension.SetTest do
   defp stateful_extension(name) do
     ~s'''
     defmodule #{inspect(module_for(name))} do
-      use Eva.Extension
+      use Eva.Core.Extension
 
       def setup(_ctx) do
-        {:ok, %Eva.Extension.Spec{
+        {:ok, %Eva.Core.Extension.Spec{
           hooks: [:tool_call],
           event_classes: [:stream],
           commands: [
-            %Eva.Extension.Spec.Command{name: "ping", description: "pong", arg_hint: ""}
+            %Eva.Core.Extension.Spec.Command{name: "ping", description: "pong", arg_hint: ""}
           ]
         }}
       end
@@ -88,12 +88,12 @@ defmodule Eva.Extension.SetTest do
   defp command_extension(name) do
     ~s'''
     defmodule #{inspect(module_for(name))} do
-      use Eva.Extension
+      use Eva.Core.Extension
 
       def setup(_ctx) do
-        {:ok, %Eva.Extension.Spec{
+        {:ok, %Eva.Core.Extension.Spec{
           commands: [
-            %Eva.Extension.Spec.Command{name: "hello", description: "says hello", arg_hint: "[name]"}
+            %Eva.Core.Extension.Spec.Command{name: "hello", description: "says hello", arg_hint: "[name]"}
           ]
         }}
       end
@@ -278,10 +278,10 @@ defmodule Eva.Extension.SetTest do
       # Both register the same command name
       write_extension(ext_dir, "first_cmd.exs", ~s'''
       defmodule Eva.Extension.FirstCmd do
-        use Eva.Extension
+        use Eva.Core.Extension
         def setup(_ctx) do
-          {:ok, %Eva.Extension.Spec{
-            commands: [%Eva.Extension.Spec.Command{name: "shared", description: "first", arg_hint: ""}]
+          {:ok, %Eva.Core.Extension.Spec{
+            commands: [%Eva.Core.Extension.Spec.Command{name: "shared", description: "first", arg_hint: ""}]
           }}
         end
         def init(_ctx), do: {:ok, nil}
@@ -291,10 +291,10 @@ defmodule Eva.Extension.SetTest do
 
       write_extension(ext_dir, "second_cmd.exs", ~s'''
       defmodule Eva.Extension.SecondCmd do
-        use Eva.Extension
+        use Eva.Core.Extension
         def setup(_ctx) do
-          {:ok, %Eva.Extension.Spec{
-            commands: [%Eva.Extension.Spec.Command{name: "shared", description: "second", arg_hint: ""}]
+          {:ok, %Eva.Core.Extension.Spec{
+            commands: [%Eva.Core.Extension.Spec.Command{name: "shared", description: "second", arg_hint: ""}]
           }}
         end
         def init(_ctx), do: {:ok, nil}

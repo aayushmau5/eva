@@ -2,7 +2,7 @@ defmodule Eva.AI.OpenAICompatibleProviderTest do
   use ExUnit.Case, async: false
 
   alias Eva.AI.{Config.OpenAICompatible, Events, OpenAICompatibleProvider}
-  alias Eva.Agent.{Messages, Tools}
+  alias Eva.Core.Agent.{Messages, Tools}
   alias Eva.Test.SseServer
 
   # ---------------------------------------------------------------------------

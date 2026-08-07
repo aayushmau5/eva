@@ -1,6 +1,6 @@
 defmodule Eva.Coding.Tools do
-  alias Eva.Agent.Messages
-  alias Eva.Agent.Tools
+  alias Eva.Core.Agent.Messages
+  alias Eva.Core.Agent.Tools
   alias Eva.Coding.Diff
   alias Eva.Coding.ShellExec
 

@@ -8,8 +8,8 @@ defmodule Eva.Test.RemoteTools do
   node. `test/support` is compiled into the app's `ebin`, which the node gets via `-pa`.
   """
 
-  alias Eva.Agent.Tools
-  alias Eva.Extension.ToolRegistry
+  alias Eva.Core.Agent.Tools
+  alias Eva.Core.Extension.ToolRegistry
 
   @doc """
   Registers the named tools for a session, on whichever node this runs on.
