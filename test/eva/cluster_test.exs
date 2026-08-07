@@ -12,10 +12,14 @@ defmodule Eva.ClusterTest do
   alias Eva.Cluster
   alias Eva.Cluster.Protocol
   alias Eva.Cluster.Protocol.Announcement
+  alias Eva.Coding.Resources
+  alias Eva.Extension.Registry
 
   setup do
     # The application only starts the directory when distribution is on, so tests own it.
-    start_supervised!(Eva.Cluster)
+    # `allow: nil` because most of this file is about joining rather than about who may:
+    # the default reads the registry, and none of these fixtures are registered.
+    start_supervised!({Eva.Cluster, allow: nil})
     :ok
   end
 
@@ -25,13 +29,15 @@ defmodule Eva.ClusterTest do
     pid
   end
 
-  defp announce(name, overrides \\ %{}) do
+  defp announce(name, overrides \\ %{}), do: announce_to(Cluster, name, overrides)
+
+  defp announce_to(server, name, overrides \\ %{}) do
     announcement =
       :extension
       |> Protocol.announcement(name, member_process())
       |> Map.merge(overrides)
 
-    GenServer.call(Cluster, {:announce, announcement})
+    GenServer.call(server, {:announce, announcement})
   end
 
   describe "joining" do
@@ -99,9 +105,35 @@ defmodule Eva.ClusterTest do
       assert {:error, :not_allowed} = announce("fixture")
       assert {:ok, _generation} = announce("mcp")
 
-      # `nil` means "anything", which is the default.
+      # `nil` means "anything".
       :ok = Cluster.allow(nil)
       assert {:ok, _generation} = announce("fixture")
+    end
+
+    # The bug this replaced: the allowlist used to be read once, at application start, and
+    # copied into state. Registering an extension into a *running* Eva then did nothing —
+    # the node knocked, was refused, and retried forever with its name sitting in the file.
+    test "the registry is read at each announcement, not memorised" do
+      root = Path.join(System.tmp_dir!(), "cluster_allow_#{System.unique_integer([:positive])}")
+      on_exit(fn -> File.rm_rf!(root) end)
+
+      resources = %Resources{root: root}
+
+      directory =
+        start_supervised!(
+          Supervisor.child_spec(
+            {Cluster, name: :allowlist_directory, allow: :registry, resources: resources},
+            id: :allowlist_directory
+          )
+        )
+
+      assert {:error, :not_allowed} = announce_to(directory, "mcp")
+
+      # Registered after the directory is already up, which is the whole point.
+      :ok = Registry.put(resources, %{"name" => "mcp", "kind" => "project", "dir" => root})
+
+      assert {:ok, _generation} = announce_to(directory, "mcp")
+      assert {:error, :not_allowed} = announce_to(directory, "something-else")
     end
 
     test "a refusal explains itself in words" do

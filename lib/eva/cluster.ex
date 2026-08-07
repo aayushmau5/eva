@@ -23,6 +23,12 @@ defmodule Eva.Cluster do
   guard against mistakes rather than against an attacker who has the cookie — with one
   exception worth having: an extension registers tools the model will call and hooks that
   can rewrite them, so a name nobody asked for should never get that far.
+
+  The allowlist is the registry — `mix eva.ext.add` writes it — and it is **read at each
+  announcement rather than held**. A copy taken at startup goes stale the moment someone
+  registers an extension, and the failure is a quiet one: the node knocks, is refused, and
+  retries forever while the name it needs sits in the file all along. Announcing happens
+  once per node start, so reading a small file there costs nothing.
   """
 
   use GenServer
@@ -30,6 +36,8 @@ defmodule Eva.Cluster do
   require Logger
 
   alias Eva.Cluster.Protocol
+  alias Eva.Coding.Resources
+  alias Eva.Extension.Package
   alias Eva.Cluster.Protocol.Announcement
 
   @type member :: %{
@@ -73,13 +81,17 @@ defmodule Eva.Cluster do
   def subscribe, do: call({:subscribe, self()})
 
   @doc """
-  Replaces the set of extension names allowed to announce.
+  Replaces what this directory will admit, until it is replaced again.
 
-  `nil` allows any, which is the right default for a machine where the only way to reach
-  the cookie is to be the user already. `mix eva.ext.*` keeps this in step with the
-  registry.
+    * `:registry` — whatever `mix eva.ext.add` has registered, re-read at each announcement.
+      The default, and what a running Eva should normally be on.
+    * a list — exactly these names, ignoring the registry. For a host that wants its own
+      answer, and for tests.
+    * `nil` — anything that reaches the cookie.
+
+  Nothing needs to call this to keep the registry in step; that is what `:registry` is for.
   """
-  @spec allow(nil | [String.t()]) :: :ok
+  @spec allow(:registry | nil | [String.t()]) :: :ok
   def allow(names), do: call({:allow, names})
 
   @doc """
@@ -94,7 +106,10 @@ defmodule Eva.Cluster do
      %{
        members: %{},
        subscribers: %{},
-       allow: Keyword.get(opts, :allow),
+       allow: Keyword.get(opts, :allow, :registry),
+       # Where the registry is read from. Only interesting to a test pointing at a
+       # temporary root; everything else wants the one under `~/.eva`.
+       resources: Keyword.get(opts, :resources, %Resources{}),
        generation: 0
      }}
   end
@@ -209,7 +224,17 @@ defmodule Eva.Cluster do
   end
 
   defp allowed?(%{allow: nil}, _announcement), do: true
-  defp allowed?(%{allow: names}, %Announcement{role: :extension, name: name}), do: name in names
+
+  defp allowed?(%{allow: :registry} = state, %Announcement{role: :extension, name: name}) do
+    name in Package.allowed_names(state.resources)
+  end
+
+  defp allowed?(%{allow: names}, %Announcement{role: :extension, name: name})
+       when is_list(names) do
+    name in names
+  end
+
+  # Only extensions are filtered by name. A `:harness` has no registry to be in.
   defp allowed?(_state, _announcement), do: true
 
   defp admit(%Announcement{} = announcement, state) do

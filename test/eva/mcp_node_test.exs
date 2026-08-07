@@ -14,6 +14,7 @@ defmodule Eva.MCPNodeTest do
   @moduletag timeout: 180_000
 
   alias Eva.Cluster
+  alias Eva.Cluster.Discovery
   alias Eva.Cluster.Distribution
   alias Eva.Coding.Resources
   alias Eva.Extension.{Package, Set}
@@ -39,8 +40,9 @@ defmodule Eva.MCPNodeTest do
 
     resources = %Resources{root: root, cwd: cwd}
 
-    # Publish where this VM is, so the child can find it the way a real one would.
-    {:ok, _node} = Distribution.ensure_started(enabled?: true, root: root)
+    # This VM is already named by `mix test.dist`; the child finds it through epmd the way
+    # a real one would. Nothing is published, so there is nothing to point at a temp root.
+    {:ok, _node} = Distribution.ensure_started(enabled?: true)
     start_supervised!({Eva.Cluster, allow: ["mcp"]})
 
     # Before as well as after: an extension node outliving the thing that started it is
@@ -77,7 +79,12 @@ defmodule Eva.MCPNodeTest do
     assert_receive {:cluster_member_up, member}, 120_000
     assert member.name == "mcp"
     assert member.node != node()
-    assert [{^entry, :announced}] = Package.list(resources)
+
+    # Found by asking epmd and then asking the node, with no directory in the loop — the
+    # answer a Mix task gets, which is the whole point of it not going through `Cluster`.
+    assert Discovery.extension_node("mcp") == {:ok, member.node}
+    assert [{^entry, {:announced, eva}}] = Package.list(resources)
+    assert eva == node()
 
     # 3. A session picks it up, and its command runs over there.
     set = Set.load(resources, self(), %{cwd: cwd, model: "test"})

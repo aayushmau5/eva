@@ -18,23 +18,16 @@ defmodule Eva.Application do
       {DynamicSupervisor, strategy: :one_for_one, name: Eva.Extension.AgentSupervisor}
     ]
 
+    # Registering an extension is the decision to trust it, so the registry *is* the
+    # allowlist — `Eva.Cluster` reads it at each announcement, so an extension added while
+    # this VM is running is admitted without it having to be told. Anything reaching the
+    # cookie can already do as it likes here; what this stops is a name nobody asked for
+    # quietly registering tools the model will call.
     children =
       if match?({:ok, _node}, distribution),
-        do: children ++ [{Eva.Cluster, allow: allowed_extensions()}],
+        do: children ++ [Eva.Cluster],
         else: children
 
     Supervisor.start_link(children, strategy: :one_for_one)
-  end
-
-  # Registering an extension is the decision to trust it, so the registry *is* the
-  # allowlist. Anything reaching the cookie can already do as it likes with this VM; what
-  # this stops is a name nobody asked for quietly registering tools the model will call.
-  defp allowed_extensions do
-    Eva.Extension.Package.allowed_names(%Eva.Coding.Resources{})
-  end
-
-  @impl true
-  def stop(_state) do
-    Eva.Cluster.Distribution.stop()
   end
 end

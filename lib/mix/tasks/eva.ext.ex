@@ -32,6 +32,32 @@ defmodule Mix.Tasks.Eva.Ext.Helpers do
 
   def resources, do: %Resources{cwd: File.cwd!()}
 
+  @doc """
+  Makes this Mix VM a node, so it can talk to the ones already running.
+
+  Reaching another VM means being one — `Node.connect/1` from `nonode@nohost` cannot even
+  be attempted. Distribution is off by default here (a Mix task should not open a socket
+  for `mix eva.ext.add`), so the tasks that need it say so.
+
+  The name deliberately sits outside the `eva_` space an Eva or an extension announces
+  under: a CLI that exists for half a second must never look like something worth joining
+  to a node sweeping for Evas.
+  """
+  @spec ensure_node!() :: :ok
+  def ensure_node! do
+    if Node.alive?() do
+      :ok
+    else
+      name = :"evacli_#{System.pid()}@127.0.0.1"
+
+      case :net_kernel.start(name, %{name_domain: :longnames}) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+        {:error, reason} -> Mix.raise("could not start distribution: #{inspect(reason)}")
+      end
+    end
+  end
+
   def describe(entry) do
     [
       IO.ANSI.bright(),
@@ -116,6 +142,7 @@ defmodule Mix.Tasks.Eva.Ext.Start do
   @impl true
   def run([name]) do
     Mix.Task.run("app.start")
+    ensure_node!()
 
     case Package.start(resources(), name) do
       {:ok, entry} ->
@@ -150,6 +177,7 @@ defmodule Mix.Tasks.Eva.Ext.Stop do
   @impl true
   def run([name]) do
     Mix.Task.run("app.start")
+    ensure_node!()
 
     case Package.stop(resources(), name) do
       :ok -> Mix.shell().info("stopping #{name}")
@@ -164,7 +192,8 @@ defmodule Mix.Tasks.Eva.Ext.List do
   @shortdoc "Lists registered project extensions"
 
   @moduledoc """
-  Lists registered project extensions and whether each one is currently announced.
+  Lists registered project extensions, and for each one whether its node is running and
+  which Eva it joined.
 
       mix eva.ext.list
   """
@@ -178,6 +207,7 @@ defmodule Mix.Tasks.Eva.Ext.List do
   @impl true
   def run(_args) do
     Mix.Task.run("app.start")
+    ensure_node!()
 
     case Package.list(resources()) do
       [] ->
@@ -190,7 +220,24 @@ defmodule Mix.Tasks.Eva.Ext.List do
     end
   end
 
-  defp status(:announced), do: [IO.ANSI.green(), "running", IO.ANSI.reset()]
+  defp status({:announced, eva}) do
+    [
+      IO.ANSI.green(),
+      "running",
+      IO.ANSI.reset(),
+      IO.ANSI.faint(),
+      "  ",
+      to_string(eva),
+      IO.ANSI.reset()
+    ]
+  end
+
+  # Up, but it has joined nothing — so no session can see it. Worth saying out loud, since
+  # the symptom is an extension that is "running" and contributing nothing.
+  defp status(:unattached) do
+    [IO.ANSI.yellow(), "running, not attached to an Eva", IO.ANSI.reset()]
+  end
+
   defp status(:not_running), do: [IO.ANSI.faint(), "not running", IO.ANSI.reset()]
 end
 

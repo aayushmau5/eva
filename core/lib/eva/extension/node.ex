@@ -27,7 +27,7 @@ defmodule Eva.Extension.Node do
 
   require Logger
 
-  alias Eva.Cluster.Protocol
+  alias Eva.Cluster.{Discovery, Protocol}
   alias Eva.Extension.{Context, Spec, Supervisor, ToolRegistry}
 
   @initial_backoff 500
@@ -37,13 +37,11 @@ defmodule Eva.Extension.Node do
   * `:name` — the extension's name, which must match its module's namespace
   * `:module` — the module with `use Eva.Extension`
   * `:eva_node` — skip discovery and announce to this node
-  * `:discovery_path` — where the host writes its node name (default `~/.eva/node`)
   """
   @type option ::
           {:name, String.t()}
           | {:module, module()}
           | {:eva_node, node()}
-          | {:discovery_path, String.t()}
 
   @spec start_link([option()]) :: GenServer.on_start()
   def start_link(opts) do
@@ -51,9 +49,14 @@ defmodule Eva.Extension.Node do
   end
 
   @doc """
-  Whether this node is currently announced, and to whom.
+  What this node is, whether it is announced, and to whom.
   """
-  @spec status() :: %{announced?: boolean(), eva_node: node() | nil, generation: term()}
+  @spec status() :: %{
+          name: String.t(),
+          announced?: boolean(),
+          eva_node: node() | nil,
+          generation: term()
+        }
   def status(server \\ __MODULE__), do: GenServer.call(server, :status)
 
   @doc """
@@ -68,7 +71,6 @@ defmodule Eva.Extension.Node do
       name: Keyword.fetch!(opts, :name),
       module: Keyword.fetch!(opts, :module),
       eva_node: Keyword.get(opts, :eva_node),
-      discovery_path: Keyword.get(opts, :discovery_path, default_discovery_path()),
       announced_to: nil,
       generation: nil,
       backoff: @initial_backoff
@@ -92,6 +94,7 @@ defmodule Eva.Extension.Node do
   @impl true
   def handle_call(:status, _from, state) do
     status = %{
+      name: state.name,
       announced?: not is_nil(state.announced_to),
       eva_node: state.announced_to,
       generation: state.generation
@@ -244,29 +247,22 @@ defmodule Eva.Extension.Node do
 
   defp discover(%{eva_node: eva_node}) when not is_nil(eva_node), do: {:ok, eva_node}
 
-  # a rendezvous point
-  defp discover(%{discovery_path: path}) do
-    # `EVA_NODE` is what a launcher sets when it already knows — `mix eva.ext.start` reads
-    # the discovery file once and passes the answer down, so the child does not have to
-    # find it again.
+  defp discover(_state) do
+    # `EVA_NODE` is for a launcher that already knows, and for pinning this node to one Eva
+    # when several are up. Without it, epmd is asked.
     case System.get_env("EVA_NODE") do
-      name when is_binary(name) and name != "" -> {:ok, String.to_atom(name)}
-      _unset -> read_discovery_file(path)
-    end
-  end
+      name when is_binary(name) and name != "" ->
+        {:ok, String.to_atom(name)}
 
-  defp read_discovery_file(path) do
-    with {:ok, binary} <- File.read(path),
-         {:ok, %{"node" => name}} <- JSON.decode(binary) do
-      {:ok, String.to_atom(name)}
-    else
-      _other -> {:error, :no_eva_found}
+      _unset ->
+        # First of however many are running. Arbitrary when there are several, and this
+        # node serves one at a time — set `EVA_NODE` when the choice matters. The retry
+        # loop calls this again after a `nodedown`, so the Eva that is left is found
+        # without anything else having to notice.
+        case Discovery.evas() do
+          [eva | _rest] -> {:ok, eva}
+          [] -> {:error, :no_eva_found}
+        end
     end
-  end
-
-  # `EVA_NODE_FILE` matters when Eva is running with a root that is not `~/.eva` — a test,
-  # or two Evas on one machine.
-  defp default_discovery_path do
-    System.get_env("EVA_NODE_FILE") || Path.join([Path.expand("~"), ".eva", "node"])
   end
 end

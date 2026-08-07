@@ -25,7 +25,9 @@ defmodule Eva.ClusterNodeTest do
   end
 
   setup do
-    start_supervised!(Eva.Cluster)
+    # `allow: nil` because none of this is about the allowlist — the default reads the
+    # registry, and these fixtures were never registered.
+    start_supervised!({Eva.Cluster, allow: nil})
 
     {:ok, remote} = ClusterNode.start(:"fixture_#{System.unique_integer([:positive])}")
     on_exit(fn -> ClusterNode.stop(remote) end)
@@ -144,7 +146,9 @@ defmodule Eva.ClusterSetTest do
   alias Eva.Test.ClusterNode
 
   setup do
-    start_supervised!(Eva.Cluster)
+    # `allow: nil` because none of this is about the allowlist — the default reads the
+    # registry, and these fixtures were never registered.
+    start_supervised!({Eva.Cluster, allow: nil})
 
     {:ok, remote} = ClusterNode.start(:"set_#{System.unique_integer([:positive])}")
     on_exit(fn -> ClusterNode.stop(remote) end)
@@ -293,7 +297,9 @@ defmodule Eva.ClusterToolsTest do
   alias Eva.Test.ClusterNode
 
   setup do
-    start_supervised!(Eva.Cluster)
+    # `allow: nil` because none of this is about the allowlist — the default reads the
+    # registry, and these fixtures were never registered.
+    start_supervised!({Eva.Cluster, allow: nil})
 
     {:ok, remote} = ClusterNode.start(:"tools_#{System.unique_integer([:positive])}")
     on_exit(fn -> ClusterNode.stop(remote) end)
@@ -411,7 +417,9 @@ defmodule Eva.ClusterCapabilitiesTest do
   alias Eva.Test.ClusterNode
 
   setup do
-    start_supervised!(Eva.Cluster)
+    # `allow: nil` because none of this is about the allowlist — the default reads the
+    # registry, and these fixtures were never registered.
+    start_supervised!({Eva.Cluster, allow: nil})
 
     {:ok, remote} = ClusterNode.start(:"caps_#{System.unique_integer([:positive])}")
     on_exit(fn -> ClusterNode.stop(remote) end)
