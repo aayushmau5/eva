@@ -7,9 +7,9 @@ defmodule Eva.MCPNodeTest do
   talks to it across the boundary. It is the slowest test in the tree and the only one that
   proves the whole path.
 
-  MCP lives in its own repo now, so the checkout is not guaranteed to be here. Point
-  `EVA_MCP_PATH` at it, or have it beside this one as `../eva-mcp`; absent both, this
-  skips rather than fails, because a missing sibling repo is not a broken Eva.
+  MCP lives in its own repo now (`aayushmau5/eva-mcp-extension`), so the checkout is not
+  guaranteed to be here. Point `EVA_MCP_PATH` at it, or have it beside this one; absent
+  both, this skips rather than fails, because a missing sibling repo is not a broken Eva.
   """
 
   use ExUnit.Case, async: false
@@ -17,13 +17,21 @@ defmodule Eva.MCPNodeTest do
   @moduletag :distributed
   @moduletag timeout: 180_000
 
-  # Resolved once, at compile time, so the skip tag can depend on it.
-  @mcp_path System.get_env("EVA_MCP_PATH", "../eva-mcp") |> Path.expand()
-  @mcp_missing not File.regular?(Path.join(@mcp_path, "mix.exs"))
+  # Both names, because the repo is `eva-mcp-extension` and a fresh clone is named after
+  # it, while a checkout predating that is `eva-mcp`. Resolved at compile time so the skip
+  # tag can depend on the answer.
+  @mcp_candidates (case System.get_env("EVA_MCP_PATH") do
+                     nil -> ["../eva-mcp", "../eva-mcp-extension"]
+                     path -> [path]
+                   end)
+                  |> Enum.map(&Path.expand/1)
+
+  @mcp_path Enum.find(@mcp_candidates, &File.regular?(Path.join(&1, "mix.exs")))
 
   @moduletag skip:
-               @mcp_missing and
-                 "no eva-mcp checkout at #{@mcp_path} — clone it there or set EVA_MCP_PATH"
+               is_nil(@mcp_path) and
+                 "no eva-mcp checkout found (looked in #{Enum.join(@mcp_candidates, ", ")})" <>
+                   " — clone it beside this repo or set EVA_MCP_PATH"
 
   alias Eva.Cluster
   alias Eva.Core.Cluster.Discovery
