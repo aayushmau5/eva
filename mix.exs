@@ -61,14 +61,12 @@ defmodule Eva.MixProject do
       ],
       "format.all": [
         "format",
-        "cmd --cd core mix format",
-        "cmd --cd ext/mcp mix format"
+        "cmd --cd core mix format"
       ],
       "test.all": [
         "test",
         "test.dist",
-        "cmd --cd core mix test",
-        "cmd --cd ext/mcp mix test"
+        "cmd --cd core mix test"
       ],
       # Distributed tests need a named VM, and a VM cannot be named after it has booted
       # without breaking references already held to `nonode@nohost`.

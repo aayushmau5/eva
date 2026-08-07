@@ -2,16 +2,28 @@ defmodule Eva.MCPNodeTest do
   @moduledoc """
   MCP as a project extension: registered, started as its own OS process, announcing itself.
 
-  Nothing here is simulated. `mix eva.ext.start` really runs `mix run --no-halt` in
-  `ext/mcp`, that VM really brings up distribution and joins, and the session really talks
-  to it across the boundary. It is the slowest test in the tree and the only one that
+  Nothing here is simulated. `mix eva.ext.start` really runs `mix run --no-halt` in the
+  eva-mcp checkout, that VM really brings up distribution and joins, and the session really
+  talks to it across the boundary. It is the slowest test in the tree and the only one that
   proves the whole path.
+
+  MCP lives in its own repo now, so the checkout is not guaranteed to be here. Point
+  `EVA_MCP_PATH` at it, or have it beside this one as `../eva-mcp`; absent both, this
+  skips rather than fails, because a missing sibling repo is not a broken Eva.
   """
 
   use ExUnit.Case, async: false
 
   @moduletag :distributed
   @moduletag timeout: 180_000
+
+  # Resolved once, at compile time, so the skip tag can depend on it.
+  @mcp_path System.get_env("EVA_MCP_PATH", "../eva-mcp") |> Path.expand()
+  @mcp_missing not File.regular?(Path.join(@mcp_path, "mix.exs"))
+
+  @moduletag skip:
+               @mcp_missing and
+                 "no eva-mcp checkout at #{@mcp_path} — clone it there or set EVA_MCP_PATH"
 
   alias Eva.Cluster
   alias Eva.Core.Cluster.Discovery
@@ -26,6 +38,20 @@ defmodule Eva.MCPNodeTest do
 
   setup do
     unless Node.alive?(), do: raise("needs a distributed VM — run `mix test.dist`")
+
+    # The child resolves `eva_core` from a git checkout of this repo unless told otherwise,
+    # which would test the contract as pushed rather than the one in this working tree —
+    # exactly backwards for the test that exists to catch contract drift. `System.cmd/3`
+    # hands our environment to the child, so setting it here is enough to redirect it.
+    previous_core_path = System.get_env("EVA_CORE_PATH")
+    System.put_env("EVA_CORE_PATH", Path.expand("core"))
+
+    on_exit(fn ->
+      case previous_core_path do
+        nil -> System.delete_env("EVA_CORE_PATH")
+        path -> System.put_env("EVA_CORE_PATH", path)
+      end
+    end)
 
     root = Path.join(System.tmp_dir!(), "mcp_node_#{System.unique_integer([:positive])}")
     cwd = Path.join(root, "project")
@@ -66,7 +92,7 @@ defmodule Eva.MCPNodeTest do
     cwd: cwd
   } do
     # 1. Register it. This records where it is and how to start it, and nothing else.
-    assert {:ok, entry} = Package.add(resources, "ext/mcp")
+    assert {:ok, entry} = Package.add(resources, @mcp_path)
     assert entry["name"] == "mcp"
     assert entry["start"] == ["mix", "run", "--no-halt"]
     assert Package.list(resources) == [{entry, :not_running}]
