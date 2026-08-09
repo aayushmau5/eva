@@ -33,6 +33,10 @@ defmodule Eva.Core.Extension.Node do
   @initial_backoff 500
   @max_backoff 30_000
 
+  # Attempts before "Eva is not up yet" stops being an explanation and starts being a
+  # symptom.
+  @loud_after 5
+
   @typedoc """
   * `:name` — the extension's name, which must match its module's namespace
   * `:module` — the module with `use Eva.Core.Extension`
@@ -73,13 +77,18 @@ defmodule Eva.Core.Extension.Node do
       eva_node: Keyword.get(opts, :eva_node),
       announced_to: nil,
       generation: nil,
-      backoff: @initial_backoff
+      backoff: @initial_backoff,
+      failures: 0,
+      last_report: nil
     }
 
     # `mix run --no-halt` is not a distributed VM, and a VM that is not a node cannot
     # connect to anything. Doing this here means the operational story stays "start it" —
     # no `--name` to remember, and `iex -S mix` works for development unchanged.
-    :ok = ensure_distributed(state.name)
+    #
+    # Best effort: `announce/1` tries again and is where a failure is reported, so a name
+    # that is momentarily taken does not have to be fatal here.
+    _ = ensure_distributed(state)
 
     # Tells us when Eva goes away *and* when one appears, so a node started before Eva
     # announces the moment there is something to announce to.
@@ -143,22 +152,62 @@ defmodule Eva.Core.Extension.Node do
   defp announce(%{announced_to: announced} = state) when not is_nil(announced), do: state
 
   defp announce(state) do
-    with {:ok, eva_node} <- discover(state),
+    # Distribution first, and re-tried rather than assumed: the name may have been taken
+    # when this node booted and free a moment later.
+    with :ok <- ensure_distributed(state),
+         {:ok, eva_node} <- discover(state),
          true <- Node.connect(eva_node),
          {:ok, generation} <- send_announcement(eva_node, state) do
       Logger.info("announced #{state.name} to #{eva_node}")
 
-      %{state | announced_to: eva_node, generation: generation, backoff: @initial_backoff}
+      %{
+        state
+        | announced_to: eva_node,
+          generation: generation,
+          backoff: @initial_backoff,
+          failures: 0,
+          last_report: nil
+      }
     else
       {:error, {:refused, reason}} ->
         # A refusal is a decision, not a hiccup: retrying a version mismatch every half
         # second forever would bury the one message that explains it.
-        Logger.error("eva refused #{state.name}: #{Protocol.describe_refusal(reason)}")
-        %{state | backoff: @max_backoff} |> schedule_retry()
+        state
+        |> report(:error, "eva refused it: #{Protocol.describe_refusal(reason)}")
+        |> Map.put(:backoff, @max_backoff)
+        |> schedule_retry()
+
+      {:error, {:distribution, reason}} ->
+        state
+        |> report(:error, "could not start distribution: #{inspect(reason)}")
+        |> schedule_retry()
 
       other ->
-        Logger.debug("could not announce #{state.name} yet: #{inspect(other)}")
-        schedule_retry(state)
+        state |> waiting(other) |> schedule_retry()
+    end
+  end
+
+  # Eva not being up yet is the ordinary case, and stays quiet
+  # until it has been quiet for long enough
+  defp waiting(state, reason) do
+    state = %{state | failures: state.failures + 1}
+    message = "not announced yet: #{inspect(reason)}"
+
+    if state.failures >= @loud_after do
+      report(state, :warning, message)
+    else
+      Logger.debug("#{state.name}: #{message}")
+      state
+    end
+  end
+
+  defp report(state, level, message) do
+    if state.last_report == message do
+      Logger.debug("#{state.name}: #{message}")
+      state
+    else
+      Logger.log(level, "#{state.name}: #{message}")
+      %{state | last_report: message}
     end
   end
 
@@ -174,16 +223,20 @@ defmodule Eva.Core.Extension.Node do
     :exit, reason -> {:error, {:unreachable, reason}}
   end
 
-  defp ensure_distributed(name) do
+  @doc """
+  The node name this VM takes when it brings up distribution itself.
+  """
+  @spec node_name(String.t()) :: node()
+  def node_name(name), do: :"eva_ext_#{name}_#{System.pid()}@127.0.0.1"
+
+  defp ensure_distributed(%{name: name}) do
     if Node.alive?() do
       :ok
     else
-      node_name = :"eva_ext_#{name}_#{:erlang.unique_integer([:positive])}@127.0.0.1"
-
       # Long names, because a long-named VM and a short-named one cannot connect and the
       # failure says only `:noconnection`.
       # Long names enables cross machine node connection.
-      case :net_kernel.start(node_name, %{name_domain: :longnames}) do
+      case :net_kernel.start(node_name(name), %{name_domain: :longnames}) do
         {:ok, _pid} ->
           Logger.info("started distribution as #{node()}")
           :ok
@@ -192,8 +245,7 @@ defmodule Eva.Core.Extension.Node do
           :ok
 
         {:error, reason} ->
-          Logger.error("could not start distribution: #{inspect(reason)}")
-          :ok
+          {:error, {:distribution, reason}}
       end
     end
   end
