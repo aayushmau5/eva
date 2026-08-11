@@ -129,6 +129,9 @@ defmodule Mix.Tasks.Eva.Ext.Start do
   announces itself. It keeps running after this command returns and across Eva restarts —
   stop it with `mix eva.ext.stop <name>`.
 
+  Everything it writes goes to `~/.eva/logs/<name>.log`, appended across restarts. That
+  file is the only account of a detached node that stopped on its own.
+
   Starting it before Eva is running is fine: it retries, and announces as soon as there is
   something to announce to.
   """
@@ -147,6 +150,13 @@ defmodule Mix.Tasks.Eva.Ext.Start do
     case Package.start(resources(), name) do
       {:ok, entry} ->
         Mix.shell().info(["starting ", describe(entry)])
+
+        Mix.shell().info([
+          IO.ANSI.faint(),
+          "  logging to ",
+          entry["log"],
+          IO.ANSI.reset()
+        ])
 
       {:error, reason} ->
         Mix.raise(reason)

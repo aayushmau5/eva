@@ -156,7 +156,8 @@ defmodule Eva.Core.Extension.Node do
     # when this node booted and free a moment later.
     with :ok <- ensure_distributed(state),
          {:ok, eva_node} <- discover(state),
-         true <- Node.connect(eva_node),
+         _ <- Node.connect(eva_node),
+         :pong <- Node.ping(eva_node),
          {:ok, generation} <- send_announcement(eva_node, state) do
       Logger.info("announced #{state.name} to #{eva_node}")
 

@@ -70,10 +70,15 @@ defmodule Eva.Extension.Package do
       # most of the time and silently never appears the rest. `nohup ... &` hands the
       # process to init and returns immediately, which is what "detached" has to mean for
       # something meant to outlive the command that started it.
-      script = "nohup " <> shell_command(entry["start"]) <> " >/dev/null 2>&1 &"
+      #
+      # Output goes to a log rather than /dev/null. A detached node that dies takes its
+      # crash report with it otherwise, and "it ran for a while and then stopped" is the
+      # one failure this command has no other way to explain.
+      log = log_path(resources, name)
+      script = "nohup " <> shell_command(entry["start"]) <> " >>" <> shell_quote(log) <> " 2>&1 &"
 
       case System.cmd("sh", ["-c", script], cd: entry["dir"], env: environment(resources, opts)) do
-        {_output, 0} -> {:ok, entry}
+        {_output, 0} -> {:ok, Map.put(entry, "log", log)}
         {output, status} -> {:error, "#{name}: start exited #{status}\n#{output}"}
       end
     else
@@ -187,10 +192,23 @@ defmodule Eva.Extension.Package do
 
   # Quoted, because a start command is user data: a directory with a space in it, or an
   # argument with one, must not become two arguments.
-  defp shell_command(argv) do
-    Enum.map_join(argv, " ", fn part ->
-      "'" <> String.replace(to_string(part), "'", "'\\''") <> "'"
-    end)
+  @doc """
+  Where a node started by `start/3` writes everything it says.
+
+  One file per extension, appended to across restarts, so the run before the one that
+  is up is still there to read.
+  """
+  @spec log_path(Resources.t(), String.t()) :: String.t()
+  def log_path(%Resources{root: root}, name) do
+    dir = Path.join(root, "logs")
+    File.mkdir_p!(dir)
+    Path.join(dir, "#{name}.log")
+  end
+
+  defp shell_command(argv), do: Enum.map_join(argv, " ", &shell_quote/1)
+
+  defp shell_quote(part) do
+    "'" <> String.replace(to_string(part), "'", "'\\''") <> "'"
   end
 
   # The child finds Eva by itself — epmd knows where every Eva is, and the child asks the

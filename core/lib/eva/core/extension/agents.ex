@@ -34,7 +34,7 @@ defmodule Eva.Core.Extension.Agents do
 
   alias Eva.Core.Extension.Context
 
-  @max_depth 3
+  @max_depth 30
 
   @type opts :: %{
           required(:prompt) => String.t(),
