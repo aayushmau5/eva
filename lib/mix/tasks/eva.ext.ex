@@ -131,10 +131,15 @@ defmodule Mix.Tasks.Eva.Ext.Remote do
   Registers an extension that runs somewhere else.
 
       mix eva.ext.remote gpu 100.64.5.20:9001
+      mix eva.ext.remote gpu 100.64.5.20:9001 --machine devbox
 
   The host and port are what the other machine's node was started with — its `:port`
   option, on its tailnet address. Eva dials that directly and never asks a remote epmd
   anything, which is why the port has to be written down.
+
+  `--machine` is optional and gives the machine a name a person can read. Without it, the
+  host slugs the tailnet address, so a remote `share` command is typed
+  `/100_64_5_20__share` rather than `/devbox__share`.
 
   Nothing is started or checked here. `mix eva.ext.start` and `stop` refuse a remote entry
   on purpose: running commands on a machine we do not own is not something Eva does.
@@ -147,25 +152,31 @@ defmodule Mix.Tasks.Eva.Ext.Remote do
   alias Eva.Extension.Package
 
   @impl true
-  def run([name, address]) do
+  def run(args) do
     Mix.Task.run("app.start")
 
-    case String.split(address, ":") do
-      [host, port] ->
-        case Integer.parse(port) do
-          {port, ""} -> add(name, host, port)
-          _other -> Mix.raise("#{port} is not a port number")
+    case OptionParser.parse(args, strict: [machine: :string]) do
+      {opts, [name, address], []} ->
+        case String.split(address, ":") do
+          [host, port] ->
+            case Integer.parse(port) do
+              {port, ""} -> add(name, host, port, opts[:machine])
+              _other -> Mix.raise("#{port} is not a port number")
+            end
+
+          _other ->
+            Mix.raise(usage())
         end
 
       _other ->
-        Mix.raise("usage: mix eva.ext.remote <name> <host>:<port>")
+        Mix.raise(usage())
     end
   end
 
-  def run(_args), do: Mix.raise("usage: mix eva.ext.remote <name> <host>:<port>")
+  defp usage, do: "usage: mix eva.ext.remote <name> <host>:<port> [--machine <label>]"
 
-  defp add(name, host, port) do
-    case Package.add_remote(resources(), name, host, port) do
+  defp add(name, host, port, machine) do
+    case Package.add_remote(resources(), name, host, port, machine) do
       {:ok, entry} ->
         Mix.shell().info([
           "added ",
@@ -174,6 +185,7 @@ defmodule Mix.Tasks.Eva.Ext.Remote do
           IO.ANSI.reset(),
           IO.ANSI.faint(),
           "  #{entry["host"]}:#{entry["port"]}",
+          machine_suffix(entry),
           IO.ANSI.reset()
         ])
 
@@ -181,6 +193,11 @@ defmodule Mix.Tasks.Eva.Ext.Remote do
         Mix.raise(reason)
     end
   end
+
+  defp machine_suffix(%{"machine" => machine}) when is_binary(machine) and machine != "",
+    do: " as #{machine}"
+
+  defp machine_suffix(_entry), do: ""
 end
 
 defmodule Mix.Tasks.Eva.Ext.Start do

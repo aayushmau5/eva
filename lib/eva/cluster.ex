@@ -504,7 +504,8 @@ defmodule Eva.Cluster do
         |> Registry.remote()
         |> Enum.find(&(Registry.node_name(&1) == description.node))
 
-      (entry && entry["machine"]) || slug(host_of(description.node))
+      label = (entry && entry["machine"]) || host_of(description.node)
+      slug(label)
     end
   end
 

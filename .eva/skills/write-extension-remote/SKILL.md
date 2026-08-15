@@ -78,12 +78,15 @@ On the machine whose Eva will use the extension:
 
 ```bash
 mix eva.ext.remote gpu 100.64.5.20:9001
+mix eva.ext.remote gpu 100.64.5.20:9001 --machine devbox
 ```
 
-That records where to dial — a `{"name" => "gpu", "kind" => "remote", "host" => …, "port" =>
-…}` entry — and nothing else. Nothing is started or checked; the other machine may be
-asleep. There is no epmd to ask on another machine, which is why the port has to be written
-down: Eva dials that address directly.
+That records where to dial — a `{"name" => "gpu", "kind" => "remote", "host" => …,
+"port" => …}` entry — and nothing else. `--machine` is optional and names the machine in a
+way a person can read; without it Eva slugs the address, so commands are typed
+`/100_64_5_20__deploy` rather than `/devbox__deploy`. Nothing is started or checked; the
+other machine may be asleep. There is no epmd to ask on another machine, which is why the
+port has to be written down: Eva dials that address directly.
 
 Two things on the Eva side have to be true for the dial to happen:
 
@@ -128,7 +131,8 @@ wherever the session is — that is how `ask` and `spawn_agent` already work.
 A remote extension's `read_file` is offered to the model as `<machine>__read_file`, and
 `/deploy` is typed `/<machine>__deploy`. You write them unqualified; Eva adds the machine
 label — a slug of the host (`100.64.5.20` becomes `100_64_5_20`), or a friendlier
-`"machine"` value you can put in the registry entry. The far side never sees the prefix.
+`"machine"` value you give to `mix eva.ext.remote --machine` (or put straight in the
+registry entry). The far side never sees the prefix.
 
 This is deliberate even when nothing collides — a name is what the model actually types, so
 it is where "this runs somewhere else" has to be said. It also means the same extension on

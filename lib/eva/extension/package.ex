@@ -57,12 +57,24 @@ defmodule Eva.Extension.Package do
 
   Nothing is fetched, built or checked — the machine may well be asleep. All this records
   is where to dial, which is the only thing we could act on anyway.
+
+  `machine` is optional and names the machine in a way a person can read. Without it, the
+  host falls back to the tailnet address, so a remote `share` command is typed
+  `/100_64_5_20__share` rather than `/devbox__share`.
   """
-  @spec add_remote(Resources.t(), String.t(), String.t(), :inet.port_number()) ::
-          {:ok, Registry.entry()} | {:error, String.t()}
-  def add_remote(%Resources{} = resources, name, host, port)
-      when is_binary(name) and is_binary(host) and is_integer(port) do
-    entry = %{"name" => name, "kind" => "remote", "host" => host, "port" => port}
+  @spec add_remote(
+          Resources.t(),
+          String.t(),
+          String.t(),
+          :inet.port_number(),
+          String.t() | nil
+        ) :: {:ok, Registry.entry()} | {:error, String.t()}
+  def add_remote(%Resources{} = resources, name, host, port, machine \\ nil)
+      when is_binary(name) and is_binary(host) and is_integer(port) and
+             (is_nil(machine) or is_binary(machine)) do
+    entry =
+      %{"name" => name, "kind" => "remote", "host" => host, "port" => port}
+      |> maybe_put_machine(machine)
 
     case Registry.put(resources, entry) do
       :ok -> {:ok, entry}
@@ -229,6 +241,12 @@ defmodule Eva.Extension.Package do
   def packages_dir(%Resources{root: root}), do: Path.join(root, "packages")
 
   # -- Private --
+
+  # A blank machine label is the same as none: the host falls back to the address slug.
+  defp maybe_put_machine(entry, machine) when is_binary(machine) and machine != "",
+    do: Map.put(entry, "machine", machine)
+
+  defp maybe_put_machine(entry, _machine), do: entry
 
   defp fetch(resources, name) do
     case Registry.fetch(resources, name) do

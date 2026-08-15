@@ -163,6 +163,17 @@ defmodule Eva.Extension.PackageTest do
       assert Registry.remote(resources) == [entry]
     end
 
+    test "may be given a machine label to keep commands readable", %{resources: resources} do
+      assert {:ok, entry} = Package.add_remote(resources, "gpu", "100.64.5.20", 9001, "devbox")
+
+      assert entry["machine"] == "devbox"
+      assert Registry.remote(resources) == [entry]
+
+      # A blank label is the same as none — the host slugs the address instead.
+      assert {:ok, blank} = Package.add_remote(resources, "gpu", "100.64.5.20", 9001, "")
+      refute Map.has_key?(blank, "machine")
+    end
+
     # Lifecycle is local. Eva chooses whether to connect to another machine; it does not
     # run commands there, which is what keeps remote execution and credentials out of this.
     test "cannot be started from here", %{resources: resources} do
