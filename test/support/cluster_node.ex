@@ -16,6 +16,10 @@ defmodule Eva.Test.ClusterNode do
   @doc """
   Boots a node with this VM's code paths and connects it.
 
+  The name is prefixed `eva_ext_`, because that is how Eva finds extension nodes now that
+  it does the dialling — `Eva.Cluster.Discovery` enumerates epmd and filters on that
+  prefix, so a peer called anything else is invisible however well it works.
+
   Requires the test VM to be distributed — run with `mix test.dist`.
   """
   @spec start(atom()) :: {:ok, %{peer: pid(), node: node()}} | {:error, term()}
@@ -25,7 +29,7 @@ defmodule Eva.Test.ClusterNode do
 
       {:ok, peer, node} =
         :peer.start_link(%{
-          name: name,
+          name: :"eva_ext_#{name}",
           host: ~c"127.0.0.1",
           longnames: true,
           connection: :standard_io,
@@ -42,18 +46,26 @@ defmodule Eva.Test.ClusterNode do
   end
 
   @doc """
-  Starts `eva_core` on the node and announces an extension from it.
+  Starts `eva_core` on the node and puts an extension up to be served from it.
 
   This is what an extension's own application does in production; here it is done by hand
   so a test can choose the module and the moment.
+
+  The node tells nobody it exists — that is the inversion. So this scans on Eva's behalf
+  and returns once the result has been applied, which spares every test a two-second wait
+  for the next tick and keeps them free of `wait_until` around joining.
   """
-  @spec announce(map(), String.t(), module()) :: {:ok, pid()} | {:error, term()}
-  def announce(%{peer: peer}, name, module) do
+  @spec serve(map(), String.t(), module(), keyword()) :: {:ok, pid()} | {:error, term()}
+  def serve(%{peer: peer}, name, module, opts \\ []) do
     {:ok, _apps} = :peer.call(peer, Application, :ensure_all_started, [:eva_core])
 
-    :peer.call(peer, Eva.Core.Extension.Node, :start_link, [
-      [name: name, module: module, eva_node: node()]
-    ])
+    node_opts = Keyword.merge([name: name, module: module], opts)
+
+    result = :peer.call(peer, Eva.Core.Extension.Node, :start_link, [node_opts])
+
+    if Eva.Cluster.running?(), do: :ok = Eva.Cluster.scan_now()
+
+    result
   end
 
   @doc "Runs a function on the node."

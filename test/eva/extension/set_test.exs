@@ -308,6 +308,10 @@ defmodule Eva.Extension.SetTest do
       commands = Set.commands(set)
       {owner, _} = commands["shared"]
       assert owner == "first_cmd"
+
+      # First still wins, but it no longer wins quietly. The loser used to vanish, leaving
+      # someone typing a command that belonged to an extension they were not thinking about.
+      assert Enum.any?(Set.diagnostics(set), &(&1 =~ "command shared is already provided by"))
     end
   end
 

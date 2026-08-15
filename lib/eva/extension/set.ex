@@ -5,6 +5,17 @@ defmodule Eva.Extension.Set do
 
   `specs` is the source of truth; tools, guidelines, commands and hook targets are
   derived from it on demand.
+
+  ## Slots, not names
+
+  An extension occupies a *slot*. For one running here that is just its name. For one on
+  another machine it is `<machine>__<name>`, because `mcp` on the laptop and `mcp` on the
+  devbox are two different extensions and a session may want both.
+
+  Its tools are qualified the same way — `devbox__read_file` — and that is deliberate even
+  when nothing collides. A description is advice; a name is what the model actually types,
+  so the name is where "this runs somewhere else" has to be said. Local extensions keep
+  bare names, so nothing about a single-machine session changes.
   """
 
   use TypedStruct
@@ -66,35 +77,40 @@ defmodule Eva.Extension.Set do
 
     loaded
     |> Enum.reduce(base, &add_extension(&2, &1, session_pid, opts))
-    |> add_announced(session_pid, opts)
+    |> add_cluster_members(session_pid, opts)
     |> finalize()
   end
 
   @doc """
-  Instantiates an extension that announced itself after this set was built.
+  Instantiates an extension Eva picked up after this set was built.
 
   A node started while Eva is running is the normal case — the user runs
-  `mix eva.ext.start mcp` mid-session — so this is not an edge path. Its tools arrive
+  `mix eva.ext.start mcp` mid-session and Eva finds it on its next scan — so this is not
+  an edge path. Its tools arrive
   through `API.update_tools/2` and land at the next prompt, exactly as they do for an
   extension that was already up.
   """
   @spec add_member(t(), map(), pid(), map()) :: t()
   def add_member(%__MODULE__{} = set, member, session_pid, opts \\ %{}) do
+    slot = slot(member)
+
     cond do
-      not enabled?(set.overrides, member.name) ->
+      not member_enabled?(set.overrides, member) ->
         set
 
-      member.name in set.order ->
+      # Only a real clash now — a *local* extension of the same name, since a remote one
+      # gets its own slot. A file on disk wins: it is specific to the project you are in.
+      slot in set.order ->
         add_diagnostic(
           set,
-          "#{member.name} announced from #{member.node}, but a local extension already " <>
+          "#{member.name} is on #{member.node}, but a local extension already " <>
             "has that name — the local one is being used"
         )
 
       true ->
         set
         |> add_remote(member, session_pid, opts)
-        |> move_last(member.name)
+        |> move_last(slot)
     end
   end
 
@@ -118,18 +134,32 @@ defmodule Eva.Extension.Set do
   """
   @spec set_enabled(t(), String.t(), boolean(), map()) :: {:ok, t()} | {:error, term()}
   def set_enabled(%__MODULE__{} = set, name, false, _opts) do
-    %__MODULE__{} = dropped = drop(set, name, :disabled)
+    %__MODULE__{} = dropped = Enum.reduce(slots_for(set, name), set, &drop(&2, &1, :disabled))
     {:ok, %__MODULE__{dropped | overrides: Map.put(set.overrides, name, false)}}
   end
 
   def set_enabled(%__MODULE__{} = set, name, true, opts) do
     set = %__MODULE__{set | overrides: Map.put(set.overrides, name, true)}
 
-    if Map.has_key?(set.specs, name) do
-      {:ok, set}
-    else
-      enable_from_disk(set, name, opts)
+    cond do
+      Map.has_key?(set.specs, name) ->
+        {:ok, set}
+
+      # Nothing to load: an extension on another machine is not a file here, and turning it
+      # back on just means letting the next scan hand it over again.
+      match?({:ok, _member}, Cluster.fetch(:extension, name)) ->
+        {:ok, set}
+
+      true ->
+        enable_from_disk(set, name, opts)
     end
+  end
+
+  # `mcp` means every copy of it; `devbox__mcp` means that one. Both are things a person
+  # might reasonably type, and only the second exists once the same extension runs in two
+  # places.
+  defp slots_for(%__MODULE__{} = set, name) do
+    Enum.filter(set.order, &(&1 == name or String.ends_with?(&1, "__" <> name)))
   end
 
   @spec tools(t()) :: [Tools.AgentTool.t()]
@@ -159,44 +189,106 @@ defmodule Eva.Extension.Set do
   #
   # The node comes from the member rather than from a pid: an extension with no processes
   # is still allowed to have tools, and it has no pid to ask.
-  defp bind_executor(%Tools.AgentTool{executor: nil} = tool, %__MODULE__{} = set, name) do
-    case Map.get(set.members, name) do
+  defp bind_executor(%Tools.AgentTool{executor: nil} = tool, %__MODULE__{} = set, slot) do
+    case Map.get(set.members, slot) do
       nil ->
         tool
 
-      %{node: node} ->
+      member ->
+        # The far side registered it under the name *it* knows, so that is what goes back
+        # over the wire. Only what the model sees is qualified.
+        remote_tool = tool.name
+
         %Tools.AgentTool{
           tool
-          | executor: fn arguments, exec_context ->
+          | name: qualify(member, remote_tool),
+            executor: fn arguments, exec_context ->
               # `exec_context` carries a pid for progress updates, and pids are
               # location-transparent — `report_update/2` from the far side lands in the
               # Loop process here with nothing extra to arrange.
-              case GenServer.call(
-                     {Eva.Core.Extension.ToolRegistry, node},
-                     {:run, name, set.session_pid, tool.name, arguments, exec_context},
-                     :infinity
-                   ) do
-                {:ok, result} -> result
-                {:error, message} -> raise message
-              end
+              run_remote(set, member, remote_tool, arguments, exec_context)
             end
         }
     end
   end
 
-  defp bind_executor(%Tools.AgentTool{} = tool, _set, _name), do: tool
+  defp bind_executor(%Tools.AgentTool{} = tool, _set, _slot), do: tool
+
+  defp run_remote(%__MODULE__{} = set, member, tool, arguments, exec_context) do
+    case GenServer.call(
+           {Eva.Core.Extension.ToolRegistry, member.node},
+           {:run, member.name, set.session_pid, tool, arguments, exec_context},
+           :infinity
+         ) do
+      {:ok, result} -> result
+      {:error, message} -> raise message
+    end
+  catch
+    # Still `:infinity` above, because a tool may legitimately take minutes. What this
+    # catches is the connection going away underneath one. It has to become an *exception*:
+    # the loop rescues those into a tool error the model can read, and an exit would go
+    # straight past that and take the turn down with it.
+    :exit, {{:nodedown, _node}, _call} ->
+      raise "#{member.name} on #{member.node} became unreachable while running #{tool}"
+
+    :exit, {:timeout, _call} ->
+      raise "#{member.name} on #{member.node} timed out running #{tool}"
+
+    :exit, {reason, _call} ->
+      raise "#{member.name} on #{member.node} failed to run #{tool}: #{inspect(reason)}"
+
+    :exit, reason ->
+      raise "#{member.name} on #{member.node} failed to run #{tool}: #{inspect(reason)}"
+  end
+
+  # The one place a machine label turns into something the model reads.
+  defp qualify(member, name) do
+    case Map.get(member, :machine) do
+      nil -> name
+      machine -> "#{machine}__#{name}"
+    end
+  end
+
+  @doc """
+  The key an extension occupies in a session — its name, or `<machine>__<name>` when it
+  runs somewhere else.
+  """
+  @spec slot(map()) :: String.t()
+  def slot(%{name: name} = member), do: qualify(member, name)
 
   @spec guidelines(t()) :: [String.t()]
   def guidelines(%__MODULE__{} = set) do
     Enum.flat_map(set.order, &spec!(set, &1).guidelines)
   end
 
+  @doc """
+  Every command a session can run, by the name it is typed as.
+
+  Qualified for a remote extension, exactly like its tools: typing a command is choosing
+  where it runs, so `/devbox__deploy` says so and `/deploy` cannot quietly mean it.
+  """
   @spec commands(t()) :: %{String.t() => {String.t(), Spec.Command.t()}}
   def commands(%__MODULE__{} = set) do
+    {kept, _shadowed} = resolve_commands(set)
+    kept
+  end
+
+  # Same shape as `resolve_tools`, and for the same reason: a name that loses a collision
+  # disappears silently otherwise, and the user is left typing a command that belongs to an
+  # extension they were not thinking about.
+  defp resolve_commands(%__MODULE__{} = set) do
     set
     |> pairs(:commands)
-    |> Enum.reduce(%{}, fn {name, command}, acc ->
-      Map.put_new(acc, command.name, {name, command})
+    |> Enum.reduce({%{}, []}, fn {slot, command}, {kept, shadowed} ->
+      typed = qualify(Map.get(set.members, slot, %{}), command.name)
+
+      case Map.fetch(kept, typed) do
+        {:ok, {owner, _command}} ->
+          {kept, ["#{slot}: command #{typed} is already provided by #{owner}" | shadowed]}
+
+        :error ->
+          {Map.put(kept, typed, {slot, command}), shadowed}
+      end
     end)
   end
 
@@ -210,7 +302,9 @@ defmodule Eva.Extension.Set do
   @spec diagnostics(t()) :: [String.t()]
   def diagnostics(%__MODULE__{} = set) do
     {_kept, rejected, _seen} = resolve_tools(set)
-    set.diagnostics ++ Enum.reverse(rejected)
+    {_commands, shadowed} = resolve_commands(set)
+
+    set.diagnostics ++ Enum.reverse(rejected) ++ Enum.reverse(shadowed)
   end
 
   @spec list(t()) :: [map()]
@@ -247,8 +341,13 @@ defmodule Eva.Extension.Set do
   @spec run_command(t(), String.t(), String.t()) :: term() | {:error, term()}
   def run_command(%__MODULE__{} = set, command_name, args) do
     case Map.get(commands(set), command_name) do
-      nil -> {:error, :unknown_command}
-      {extension_name, _command} -> dispatch_command(set, extension_name, command_name, args)
+      nil ->
+        {:error, :unknown_command}
+
+      # `command.name`, not what was typed: the far side registered it under its own name
+      # and has never heard of the machine prefix.
+      {slot, command} ->
+        dispatch_command(set, slot, command.name, args)
     end
   end
 
@@ -317,6 +416,15 @@ defmodule Eva.Extension.Set do
   # No recorded choice means enabled.
   defp enabled?(overrides, name), do: Map.get(overrides, name, true)
 
+  # A remote extension can be turned off by its slot or by its bare
+  # name, which means all of them.
+  defp member_enabled?(overrides, member) do
+    case Map.fetch(overrides, slot(member)) do
+      {:ok, enabled?} -> enabled?
+      :error -> enabled?(overrides, member.name)
+    end
+  end
+
   defp enable_from_disk(%__MODULE__{} = set, name, opts) do
     {all_candidates, _blocked} = Loader.candidates(set.resources, Map.get(opts, :extra_paths, []))
 
@@ -367,12 +475,10 @@ defmodule Eva.Extension.Set do
     end
   end
 
-  # A name found on disk wins: a file in the repository you are working in is more specific
-  # than an extension installed once and running for every session.
-  defp add_announced(%__MODULE__{} = set, session_pid, opts) do
+  defp add_cluster_members(%__MODULE__{} = set, session_pid, opts) do
     :extension
     |> Cluster.members()
-    |> Enum.filter(&(enabled?(set.overrides, &1.name) and &1.name not in set.order))
+    |> Enum.filter(&(member_enabled?(set.overrides, &1) and slot(&1) not in set.order))
     |> Enum.reduce(set, &add_remote(&2, &1, session_pid, opts))
   end
 
@@ -401,8 +507,11 @@ defmodule Eva.Extension.Set do
       other -> {:error, "instantiate returned #{inspect(other)}"}
     end
   catch
-    # The node went away between announcing and being asked. Its `:DOWN` is already on its
-    # way to the directory; this session just does without it.
+    # The node went away between being taken on and being asked. Its `:DOWN` is already on
+    # its way to the directory; this session just does without it.
+    :exit, {{:nodedown, _node}, _call} -> {:error, "unreachable"}
+    :exit, {:timeout, _call} -> {:error, "did not answer in time"}
+    :exit, {reason, _call} -> {:error, "unreachable: #{inspect(reason)}"}
     :exit, reason -> {:error, "unreachable: #{inspect(reason)}"}
   end
 
@@ -454,19 +563,20 @@ defmodule Eva.Extension.Set do
   end
 
   defp accept_remote(%__MODULE__{} = set, member, pid, %Spec{} = spec) do
-    remote = if is_pid(pid), do: Map.put(set.remote, member.name, pid), else: set.remote
+    slot = slot(member)
+    remote = if is_pid(pid), do: Map.put(set.remote, slot, pid), else: set.remote
 
     set = %__MODULE__{
       set
-      | order: [member.name | set.order],
-        members: Map.put(set.members, member.name, member),
-        specs: Map.put(set.specs, member.name, spec),
+      | order: [slot | set.order],
+        members: Map.put(set.members, slot, member),
+        specs: Map.put(set.specs, slot, spec),
         remote: remote
     }
 
     # The tools `setup/1` returned arrived stripped, exactly like the ones a later
     # `update_tools/2` will send, so they need the same proxies binding to them.
-    put_tools(set, member.name, spec.tools)
+    put_tools(set, slot, spec.tools)
   end
 
   defp build_remote_context(member, session_pid, opts) do
@@ -478,6 +588,9 @@ defmodule Eva.Extension.Set do
       session_pid: session_pid,
       # There is no directory here to point at — the code lives on the other node.
       extension_dir: nil,
+      # `nil` for a node on this machine: a separate VM, but the same disk, so the paths
+      # above mean exactly what they say. A label means they do not.
+      machine: Map.get(member, :machine),
       entries: opts |> Map.get(:extension_entries, %{}) |> Map.get(member.name, []),
       # Not the host implementation the in-VM extensions get: that module's functions run
       # where they are called, and this extension is somewhere else. The remote one has the

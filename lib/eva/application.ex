@@ -5,7 +5,7 @@ defmodule Eva.Application do
   @impl true
   def start(_type, _args) do
     # Opens a listening socket, so only when asked for. `:disabled` is the common case and
-    # not a failure — extension nodes simply have nowhere to announce to.
+    # not a failure — it just means Eva has no way to reach an extension node.
     distribution = Eva.Cluster.Distribution.ensure_started()
 
     # The `:pg` scope, the extension registry, and `Extension.Supervisor` belong to
@@ -18,11 +18,6 @@ defmodule Eva.Application do
       {DynamicSupervisor, strategy: :one_for_one, name: Eva.Extension.AgentSupervisor}
     ]
 
-    # Registering an extension is the decision to trust it, so the registry *is* the
-    # allowlist — `Eva.Cluster` reads it at each announcement, so an extension added while
-    # this VM is running is admitted without it having to be told. Anything reaching the
-    # cookie can already do as it likes here; what this stops is a name nobody asked for
-    # quietly registering tools the model will call.
     children =
       if match?({:ok, _node}, distribution),
         do: children ++ [Eva.Cluster],

@@ -2,8 +2,8 @@ defmodule Eva.Extension.Package do
   @moduledoc """
   Registering project extensions, and starting the nodes they run on.
 
-  A project extension is a Mix project that runs as its own BEAM node and announces itself
-  to Eva. Eva does not build it, does not load it, and does not own its VM — so this is a
+  A project extension is a Mix project that runs as its own BEAM node and is dialled by
+  Eva. Eva does not build it, does not load it, and does not own its VM — so this is a
   good deal. What is left:
 
     * **add** — remember where it is, and how to start it
@@ -11,17 +11,17 @@ defmodule Eva.Extension.Package do
     * **stop** — ask the running node to shut down
     * **list** — what is registered, and what each one is currently doing
 
-  Adding is also the trust model: a name has to be registered before it may announce, so
+  Adding is also the trust model: a name has to be registered before Eva will take it on, so
   nothing that merely reaches the cookie can register tools the model will call.
 
   ## Nodes are asked about themselves
 
-  An extension node is found through `Eva.Core.Cluster.Discovery` and asked what it is. That
+  An extension node is found through `Eva.Cluster.Discovery` and asked what it is. That
   works with no Eva running at all, which is the case `mix eva.ext.stop` most needs to
   handle, and it does not care how many Evas there are.
   """
 
-  alias Eva.Core.Cluster.Discovery
+  alias Eva.Cluster.Discovery
   alias Eva.Coding.Resources
   alias Eva.Extension.Registry
 
@@ -53,16 +53,35 @@ defmodule Eva.Extension.Package do
   end
 
   @doc """
+  Registers an extension that runs on another machine.
+
+  Nothing is fetched, built or checked — the machine may well be asleep. All this records
+  is where to dial, which is the only thing we could act on anyway.
+  """
+  @spec add_remote(Resources.t(), String.t(), String.t(), :inet.port_number()) ::
+          {:ok, Registry.entry()} | {:error, String.t()}
+  def add_remote(%Resources{} = resources, name, host, port)
+      when is_binary(name) and is_binary(host) and is_integer(port) do
+    entry = %{"name" => name, "kind" => "remote", "host" => host, "port" => port}
+
+    case Registry.put(resources, entry) do
+      :ok -> {:ok, entry}
+      {:error, reason} -> {:error, "could not write the registry: #{inspect(reason)}"}
+    end
+  end
+
+  @doc """
   Starts an extension's node.
 
   Detached on purpose: the node outlives the command that started it, and keeps running
-  across Eva restarts. It announces itself when it comes up, and again whenever Eva
-  returns — so starting it before Eva is running is fine.
+  across Eva restarts. Starting it before Eva is running is fine — it does not go looking
+  for anything, and a running Eva picks it up on its next scan a second or two later.
   """
   @spec start(Resources.t(), String.t(), keyword()) ::
           {:ok, Registry.entry()} | {:error, String.t()}
   def start(%Resources{} = resources, name, opts \\ []) do
     with {:ok, entry} <- fetch(resources, name),
+         :ok <- refuse_if_remote(entry, "start"),
          :ok <- refuse_if_running(name),
          [_command | _args] <- entry["start"] do
       # Deliberately not a port. A port's lifetime is tied to this VM, and closing one
@@ -92,11 +111,23 @@ defmodule Eva.Extension.Package do
   @doc """
   Asks a running extension node to stop.
 
-  Only reaches an extension that has announced itself; there is nothing else to address a
-  node by, and a node Eva has never heard from is not Eva's to stop.
+  Only reaches a node running on this machine — lifecycle is local, and a node somewhere
+  else is not Eva's to stop.
   """
   @spec stop(Resources.t(), String.t()) :: :ok | {:error, String.t()}
-  def stop(%Resources{} = _resources, name) do
+  def stop(%Resources{} = resources, name) do
+    # Registration is not required to stop something — a node running under a name nobody
+    # registered is still this machine's to shut down. Only a *remote* entry is refused.
+    case Registry.fetch(resources, name) do
+      {:ok, entry} ->
+        with :ok <- refuse_if_remote(entry, "stop"), do: stop_local(name)
+
+      :error ->
+        stop_local(name)
+    end
+  end
+
+  defp stop_local(name) do
     case Discovery.extension_node(name) do
       {:ok, node} ->
         # An orderly `init:stop`, not a kill: `terminate/2` runs, which is what takes an
@@ -109,12 +140,23 @@ defmodule Eva.Extension.Package do
     end
   end
 
+  # Lifecycle is local. Eva may choose whether to connect to another machine's node, but
+  # starting and stopping it means running commands there, which we deliberately cannot do:
+  # no remote execution, no credentials, no logs to ship back.
+  defp refuse_if_remote(entry, verb) do
+    if Registry.remote?(entry) do
+      {:error, "#{entry["name"]} lives on #{entry["host"]} — #{verb} it there, not here"}
+    else
+      :ok
+    end
+  end
+
   @doc """
   Every registered extension, with what its node is currently doing.
 
-  Three states, not two. A node that is up but has joined no Eva looks exactly like one
-  that never started if you only ask whether it announced — and those want opposite things
-  done about them, so they are told apart here.
+  Three states, not two. A node that is up but serving no Eva looks exactly like one that
+  never started if you only ask whether it is running — and those want opposite things done
+  about them, so they are told apart here.
   """
   @spec list(Resources.t()) :: [{Registry.entry(), status()}]
   def list(%Resources{} = resources) do
@@ -123,21 +165,43 @@ defmodule Eva.Extension.Package do
     running = running_by_name()
 
     Enum.map(Registry.read(resources), fn entry ->
-      case Map.fetch(running, entry["name"]) do
-        {:ok, %{announced?: true, eva_node: eva}} -> {entry, {:announced, eva}}
-        {:ok, _status} -> {entry, :unattached}
-        :error -> {entry, :not_running}
-      end
+      if Registry.remote?(entry),
+        do: {entry, remote_status(entry)},
+        else: {entry, local_status(running, entry)}
     end)
+  end
+
+  defp local_status(running, entry) do
+    case Map.fetch(running, entry["name"]) do
+      {:ok, %{serving: [_ | _] = evas}} -> {:serving, evas}
+      {:ok, _status} -> :unattached
+      :error -> :not_running
+    end
+  end
+
+  # Asked directly rather than enumerated — there is no epmd on another machine to list it.
+  # Two states, not three: we cannot tell "never started" from "cannot be reached", and
+  # pretending otherwise would be a guess.
+  defp remote_status(entry) do
+    case Discovery.status(Registry.node_name(entry)) do
+      %{serving: [_ | _] = evas} -> {:serving, evas}
+      %{} -> :unattached
+      nil -> :unreachable
+    end
   end
 
   @typedoc """
   What a registered extension's node is doing.
 
-  `{:announced, node}` names the Eva it joined, because with more than one running that is
-  the difference between "working" and "working, but not for the Eva you are looking at".
+  `{:serving, nodes}` names the Evas that took it on — a list rather than one, because
+  since Eva does the dialling there is nothing stopping two from using the same node. With
+  several running, which ones is the difference between "working" and "working, but not for
+  the Eva you are looking at".
+
+  `:not_running` is only ever said about this machine, where epmd can prove it. A remote
+  that does not answer is `:unreachable`, which is honestly less information.
   """
-  @type status :: {:announced, node()} | :unattached | :not_running
+  @type status :: {:serving, [node()]} | :unattached | :not_running | :unreachable
 
   @doc """
   Unregisters an extension. Its code and its build are left alone.
@@ -151,7 +215,7 @@ defmodule Eva.Extension.Package do
   end
 
   @doc """
-  The names allowed to announce — the registry, as the directory wants it.
+  The names allowed to join — the registry, as the directory wants it.
   """
   @spec allowed_names(Resources.t()) :: [String.t()]
   def allowed_names(%Resources{} = resources) do
@@ -180,8 +244,11 @@ defmodule Eva.Extension.Package do
     end
   end
 
+  # Local enumeration only, never the directory: the directory holds other machines' nodes
+  # too, and `stop` reading from it would kill somebody else's.
+  #
   # Keyed by the name the node reports rather than the one in its node name, for the reason
-  # `Eva.Core.Cluster.Discovery.extension_node/1` gives: prefixes cannot tell `mcp` from `mcp_2`.
+  # `Eva.Cluster.Discovery.extension_node/1` gives: prefixes cannot tell `mcp` from `mcp_2`.
   defp running_by_name do
     for node <- Discovery.extension_nodes(),
         status = Discovery.status(node),
@@ -211,15 +278,9 @@ defmodule Eva.Extension.Package do
     "'" <> String.replace(to_string(part), "'", "'\\''") <> "'"
   end
 
-  # The child finds Eva by itself — epmd knows where every Eva is, and the child asks the
-  # same way this command would. `:eva_node` is the caller pinning it to one, which is
-  # worth passing down: it is the only way to choose when several are running.
-  defp environment(_resources, opts) do
-    case Keyword.get(opts, :eva_node) do
-      nil -> []
-      node -> [{"EVA_NODE", to_string(node)}]
-    end
-  end
+  # Nothing to tell it. The child does not look for an Eva — it comes up, sits there, and
+  # is found. Which Evas it will then serve is its own `:serve` setting, not ours to pass.
+  defp environment(_resources, _opts), do: []
 
   defp resolve(resources, source) do
     if git_url?(source), do: clone(resources, source), else: local(source)
@@ -257,7 +318,7 @@ defmodule Eva.Extension.Package do
   end
 
   # `eva_mcp` is the app; `mcp` is what the user types, what the entry is keyed by, and
-  # what the extension announces itself as. Reading it from `mix.exs` rather than asking
+  # what the extension reports itself as. Reading it from `mix.exs` rather than asking
   # keeps the two from drifting.
   defp extension_name(dir, opts) do
     case Keyword.get(opts, :name) do

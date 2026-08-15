@@ -28,7 +28,9 @@ defmodule Eva.ClusterNodeTest do
   setup do
     # `allow: nil` because none of this is about the allowlist — the default reads the
     # registry, and these fixtures were never registered.
-    start_supervised!({Eva.Cluster, allow: nil})
+    # A short grace: a node being killed is indistinguishable from a connection dropping,
+    # so the real 8 seconds would be spent waiting in every test that stops a peer.
+    start_supervised!({Eva.Cluster, allow: nil, grace: 200})
 
     {:ok, remote} = ClusterNode.start(:"fixture_#{System.unique_integer([:positive])}")
     on_exit(fn -> ClusterNode.stop(remote) end)
@@ -44,21 +46,23 @@ defmodule Eva.ClusterNodeTest do
     end
   end
 
-  test "a node announces itself and lands in the directory", %{remote: remote} do
+  test "a node is dialled and lands in the directory", %{remote: remote} do
     :ok = Cluster.subscribe()
 
-    {:ok, _pid} = ClusterNode.announce(remote, "fixture", Eva.Extension.Fixture)
+    {:ok, _pid} = ClusterNode.serve(remote, "fixture", Eva.Extension.Fixture)
 
     assert_receive {:cluster_member_up, member}, 5_000
     assert member.name == "fixture"
     assert member.node == remote.node
     assert member.core_version == Eva.Core.Cluster.Protocol.core_version()
 
-    assert [^member] = Cluster.members(:extension)
+    # `in` rather than an exact list: Eva dials every extension node on the machine, and a
+    # peer from an earlier test may still be shutting down. Not what this is about.
+    assert member in Cluster.members(:extension)
   end
 
   test "the extension runs on the other node, not here", %{remote: remote} do
-    {:ok, _pid} = ClusterNode.announce(remote, "fixture", Eva.Extension.Fixture)
+    {:ok, _pid} = ClusterNode.serve(remote, "fixture", Eva.Extension.Fixture)
     member = wait_until(fn -> match?({:ok, _}, Cluster.fetch(:extension, "fixture")) && one() end)
 
     context = %Context{
@@ -88,8 +92,68 @@ defmodule Eva.ClusterNodeTest do
     assert GenServer.call(pid, {:extension_request, :entries}) == {:ok, [%{"remembered" => true}]}
   end
 
+  test "the node reports which Evas it is serving", %{remote: remote} do
+    {:ok, _pid} = ClusterNode.serve(remote, "fixture", Eva.Extension.Fixture)
+    wait_until(fn -> match?({:ok, _}, Cluster.fetch(:extension, "fixture")) end)
+
+    status = ClusterNode.call(remote, Eva.Core.Extension.Node, :status, [])
+
+    assert status.name == "fixture"
+    assert status.serving == [node()]
+    # Out of the node name in T1, so it has to be reported somewhere or it is lost.
+    assert is_binary(status.os_pid)
+  end
+
+  # The other half of the handshake. Eva chooses who it dials; the node chooses who it
+  # answers. Being reachable is not the same as being available.
+  test "a node that will not serve this Eva is not taken on", %{remote: remote} do
+    {:ok, _pid} =
+      ClusterNode.serve(remote, "fixture", Eva.Extension.Fixture,
+        serve: [:"someone_else@127.0.0.1"]
+      )
+
+    refute Enum.any?(Cluster.members(:extension), &(&1.node == remote.node))
+    assert Cluster.refusals()[remote.node] == :not_consented
+
+    status = ClusterNode.call(remote, Eva.Core.Extension.Node, :status, [])
+    assert status.serving == []
+  end
+
+  # Nothing on the node re-announces any more, so the only thing `nodedown` is still for is
+  # forgetting: an Eva that died leaves a generation behind, and a node that keeps claiming
+  # to serve it is lying.
+  test "an Eva that goes away is forgotten", %{remote: remote} do
+    {:ok, _pid} = ClusterNode.serve(remote, "fixture", Eva.Extension.Fixture)
+    wait_until(fn -> match?({:ok, _}, Cluster.fetch(:extension, "fixture")) end)
+
+    assert ClusterNode.call(remote, Eva.Core.Extension.Node, :status, []).serving == [node()]
+
+    # Delivered by hand rather than by killing this VM, which the test is running in. It
+    # is the same message `monitor_nodes/1` would send.
+    send({Eva.Core.Extension.Node, remote.node}, {:nodedown, node()})
+
+    wait_until(fn ->
+      ClusterNode.call(remote, Eva.Core.Extension.Node, :status, []).serving == []
+    end)
+  end
+
+  # §9's whole point, end to end. The label is what turns "are these paths mine?" from a
+  # guess into a comparison, and a peer on this machine must say `nil` — a separate VM, but
+  # the same disk.
+  test "a node on this machine is told its paths are readable", %{remote: remote} do
+    {:ok, _pid} = ClusterNode.serve(remote, "fixture", Eva.Extension.Fixture)
+    member = wait_until(fn -> match?({:ok, _}, Cluster.fetch(:extension, "fixture")) && one() end)
+
+    assert member.machine == nil
+
+    context = %Context{name: "fixture", cwd: "/tmp", session_pid: self(), machine: member.machine}
+    assert Context.same_machine?(context)
+
+    {:ok, _pid, _spec} = GenServer.call(member.pid, {:instantiate, context, member.generation})
+  end
+
   test "a stale generation is refused", %{remote: remote} do
-    {:ok, _pid} = ClusterNode.announce(remote, "fixture", Eva.Extension.Fixture)
+    {:ok, _pid} = ClusterNode.serve(remote, "fixture", Eva.Extension.Fixture)
     member = wait_until(fn -> match?({:ok, _}, Cluster.fetch(:extension, "fixture")) && one() end)
 
     context = %Context{name: "fixture", cwd: "/tmp", session_pid: self()}
@@ -100,7 +164,7 @@ defmodule Eva.ClusterNodeTest do
 
   test "the node going away removes it, and the session hears", %{remote: remote} do
     :ok = Cluster.subscribe()
-    {:ok, _pid} = ClusterNode.announce(remote, "fixture", Eva.Extension.Fixture)
+    {:ok, _pid} = ClusterNode.serve(remote, "fixture", Eva.Extension.Fixture)
     assert_receive {:cluster_member_up, _member}, 5_000
 
     ClusterNode.stop(remote)
@@ -113,11 +177,14 @@ defmodule Eva.ClusterNodeTest do
     :ok = Cluster.allow(["something-else"])
     on_exit(fn -> Cluster.allow(nil) end)
 
-    {:ok, _pid} = ClusterNode.announce(remote, "fixture", Eva.Extension.Fixture)
+    # A name no other test uses, so the only reason this can be refused is the allowlist.
+    {:ok, _pid} = ClusterNode.serve(remote, "refused-fixture", Eva.Extension.Fixture)
 
-    # It retries rather than giving up, so this asserts on the absence holding.
-    Process.sleep(300)
-    assert Cluster.members(:extension) == []
+    # Nothing to wait for: `serve` scans, so if it were going to be taken on it already
+    # would have been. Eva keeps looking rather than giving up, so the refusal is re-made
+    # every scan — which is what makes editing the registry work on a running Eva.
+    refute Enum.any?(Cluster.members(:extension), &(&1.node == remote.node))
+    assert Cluster.refusals()[remote.node] == :not_allowed
   end
 
   # `wait_until` wants a truthy value; the member itself comes from the fetch.
@@ -154,7 +221,7 @@ defmodule Eva.ClusterSetTest do
     {:ok, remote} = ClusterNode.start(:"set_#{System.unique_integer([:positive])}")
     on_exit(fn -> ClusterNode.stop(remote) end)
 
-    {:ok, _pid} = ClusterNode.announce(remote, "fixture", Eva.Extension.Fixture)
+    {:ok, _pid} = ClusterNode.serve(remote, "fixture", Eva.Extension.Fixture)
     wait_until(fn -> Cluster.members(:extension) != [] end)
 
     root = Path.join(System.tmp_dir!(), "cluster_set_#{System.unique_integer([:positive])}")
@@ -172,7 +239,7 @@ defmodule Eva.ClusterSetTest do
     end
   end
 
-  test "a session picks up an announced extension at load", %{
+  test "a session picks up an already-served extension at load", %{
     remote: remote,
     resources: resources
   } do
@@ -192,7 +259,7 @@ defmodule Eva.ClusterSetTest do
     assert info.running?
   end
 
-  test "an extension that announces later joins the session", %{
+  test "an extension that appears later joins the session", %{
     remote: remote,
     resources: resources
   } do
@@ -305,7 +372,7 @@ defmodule Eva.ClusterToolsTest do
     {:ok, remote} = ClusterNode.start(:"tools_#{System.unique_integer([:positive])}")
     on_exit(fn -> ClusterNode.stop(remote) end)
 
-    {:ok, _pid} = ClusterNode.announce(remote, "fixture", Eva.Extension.Fixture)
+    {:ok, _pid} = ClusterNode.serve(remote, "fixture", Eva.Extension.Fixture)
     wait_until(fn -> Cluster.members(:extension) != [] end)
 
     root = Path.join(System.tmp_dir!(), "cluster_tools_#{System.unique_integer([:positive])}")
@@ -425,7 +492,7 @@ defmodule Eva.ClusterCapabilitiesTest do
     {:ok, remote} = ClusterNode.start(:"caps_#{System.unique_integer([:positive])}")
     on_exit(fn -> ClusterNode.stop(remote) end)
 
-    {:ok, _pid} = ClusterNode.announce(remote, "fixture", Eva.Extension.Fixture)
+    {:ok, _pid} = ClusterNode.serve(remote, "fixture", Eva.Extension.Fixture)
 
     root = Path.join(System.tmp_dir!(), "cluster_caps_#{System.unique_integer([:positive])}")
     File.mkdir_p!(root)

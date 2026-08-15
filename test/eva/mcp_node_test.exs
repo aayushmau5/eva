@@ -1,6 +1,6 @@
 defmodule Eva.MCPNodeTest do
   @moduledoc """
-  MCP as a project extension: registered, started as its own OS process, announcing itself.
+  MCP as a project extension: registered, started as its own OS process, dialled by Eva.
 
   Nothing here is simulated. `mix eva.ext.start` really runs `mix run --no-halt` in the
   eva-mcp checkout, that VM really brings up distribution and joins, and the session really
@@ -34,7 +34,7 @@ defmodule Eva.MCPNodeTest do
                    " — clone it beside this repo or set EVA_MCP_PATH"
 
   alias Eva.Cluster
-  alias Eva.Core.Cluster.Discovery
+  alias Eva.Cluster.Discovery
   alias Eva.Cluster.Distribution
   alias Eva.Coding.Resources
   alias Eva.Extension.{Package, Set}
@@ -95,7 +95,7 @@ defmodule Eva.MCPNodeTest do
     %{root: root, cwd: cwd, resources: resources}
   end
 
-  test "registered, started, announced, and usable from a session", %{
+  test "registered, started, dialled, and usable from a session", %{
     resources: resources,
     cwd: cwd
   } do
@@ -107,9 +107,14 @@ defmodule Eva.MCPNodeTest do
 
     # 2. Start it. A real OS process, detached, that outlives this call.
     :ok = Cluster.subscribe()
-    assert {:ok, ^entry} = Package.start(resources, "mcp", eva_node: node())
 
-    # Generous: the child may have to compile before it can announce.
+    # `start` adds where it is logging, which the registry entry does not carry.
+    assert {:ok, started} = Package.start(resources, "mcp")
+    assert Map.delete(started, "log") == entry
+    assert started["log"] =~ "mcp.log"
+
+    # Generous: the child may have to compile before there is anything to find, and Eva
+    # only looks every couple of seconds. Nothing tells it — that is the inversion.
     assert_receive {:cluster_member_up, member}, 120_000
     assert member.name == "mcp"
     assert member.node != node()
@@ -117,8 +122,8 @@ defmodule Eva.MCPNodeTest do
     # Found by asking epmd and then asking the node, with no directory in the loop — the
     # answer a Mix task gets, which is the whole point of it not going through `Cluster`.
     assert Discovery.extension_node("mcp") == {:ok, member.node}
-    assert [{^entry, {:announced, eva}}] = Package.list(resources)
-    assert eva == node()
+    assert [{^entry, {:serving, evas}}] = Package.list(resources)
+    assert evas == [node()]
 
     # 3. A session picks it up, and its command runs over there.
     set = Set.load(resources, self(), %{cwd: cwd, model: "test"})

@@ -32,7 +32,7 @@ defmodule Eva.Extension.Loader do
   @doc """
   Every script to load, and the directories that were skipped for want of consent.
 
-  Scripts only. A project extension runs on its own node and announces itself — Eva never
+  Scripts only. A project extension runs on its own node and Eva dials it — Eva never
   loads one, so nothing about it reaches this module; see `Eva.Cluster`.
 
   A project's `.eva/extensions` is code from whoever wrote the repository and it runs

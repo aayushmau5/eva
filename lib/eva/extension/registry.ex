@@ -9,7 +9,7 @@ defmodule Eva.Extension.Registry do
   > Not to be confused with `Eva.Core.Extension.Processes`, which is an actual `Registry` of
   > running extension processes. This is a JSON file.
 
-  Each entry:
+  Two kinds. A **project** runs on this machine:
 
       %{
         "name" => "mcp",
@@ -18,14 +18,22 @@ defmodule Eva.Extension.Registry do
         "start" => ["mix", "run", "--no-halt"]
       }
 
-  Four fields, every one of them something a human would have written anyway. Eva does not
-  launch extension nodes as part of running — `mix eva.ext.start mcp` does, and that is
-  what `start` is for. Everything a previous design needed to *assemble* someone else's VM
-  (`ebin`, `lib_dir`, `app`, `core_version`, `built_at`) is gone with it: the node builds
-  and starts itself, and says what it is when it announces.
+  A **remote** runs on someone else's machine, and all we hold is where to dial:
+
+      %{
+        "name" => "gpu",
+        "kind" => "remote",
+        "host" => "100.64.5.20",
+        "port" => 9001
+      }
+
+  No `dir` and no `start` on a remote, and that is the point rather than an omission: those
+  are facts about a machine we do not own. `mix eva.ext.start gpu` says where it lives and
+  tells you to start it there.
   """
 
   alias Eva.Coding.Resources
+  alias Eva.Core.Extension.Node, as: ExtensionNode
 
   @store "extensions.json"
   @key "extensions"
@@ -50,6 +58,29 @@ defmodule Eva.Extension.Registry do
       _other -> []
     end
   end
+
+  @doc """
+  Entries for extensions on another machine.
+  """
+  @spec remote(Resources.t()) :: [entry()]
+  def remote(%Resources{} = resources) do
+    resources |> read() |> Enum.filter(&remote?/1)
+  end
+
+  @doc """
+  Whether an entry describes a remote extension.
+  """
+  @spec remote?(entry()) :: boolean()
+  def remote?(entry), do: entry["kind"] == "remote"
+
+  @doc """
+  The node name an entry's extension runs under.
+
+  Here because it is what makes a remote entry dialable at all: the name has to follow from
+  the entry alone, since nothing on this machine can ask the other one what it calls itself.
+  """
+  @spec node_name(entry()) :: node()
+  def node_name(entry), do: ExtensionNode.node_name(entry["name"], entry["host"])
 
   @doc """
   One entry by name.

@@ -145,4 +145,53 @@ defmodule Eva.Extension.PackageTest do
       assert reason =~ "not running"
     end
   end
+
+  describe "extensions on another machine" do
+    test "are registered with where to dial and nothing else", %{resources: resources} do
+      assert {:ok, entry} = Package.add_remote(resources, "gpu", "100.64.5.20", 9001)
+
+      assert entry == %{
+               "name" => "gpu",
+               "kind" => "remote",
+               "host" => "100.64.5.20",
+               "port" => 9001
+             }
+
+      # No `dir`, no `start`. Those are facts about a machine we do not own.
+      refute Map.has_key?(entry, "dir")
+      refute Map.has_key?(entry, "start")
+      assert Registry.remote(resources) == [entry]
+    end
+
+    # Lifecycle is local. Eva chooses whether to connect to another machine; it does not
+    # run commands there, which is what keeps remote execution and credentials out of this.
+    test "cannot be started from here", %{resources: resources} do
+      {:ok, _entry} = Package.add_remote(resources, "gpu", "100.64.5.20", 9001)
+
+      assert {:error, reason} = Package.start(resources, "gpu")
+      assert reason =~ "lives on 100.64.5.20"
+      assert reason =~ "start it there"
+    end
+
+    test "cannot be stopped from here", %{resources: resources} do
+      {:ok, _entry} = Package.add_remote(resources, "gpu", "100.64.5.20", 9001)
+
+      assert {:error, reason} = Package.stop(resources, "gpu")
+      assert reason =~ "stop it there"
+    end
+
+    test "are listed as unreachable when nothing answers", %{resources: resources} do
+      {:ok, entry} = Package.add_remote(resources, "gpu", "100.64.5.20", 9001)
+
+      # Two states, not three: with no epmd on the other machine we cannot tell "never
+      # started" from "asleep", and saying `:not_running` would be a guess.
+      assert [{^entry, :unreachable}] = Package.list(resources)
+    end
+
+    test "a name is derived from the entry, since we cannot ask the other machine" do
+      entry = %{"name" => "gpu", "kind" => "remote", "host" => "100.64.5.20", "port" => 9001}
+
+      assert Registry.node_name(entry) == :"eva_ext_gpu@100.64.5.20"
+    end
+  end
 end

@@ -72,13 +72,15 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
         - [x] Using exa MCP (responds in markdown)
         - [ ] In house (using finch/req) with multiple output format: markdown, html
           - [ ] JS rendered pages? Should be a lightweight implementation
-  - [ ] Subagents
+  - [x] Subagents
+    - [x] As an extension
+    - [ ] Modes or Characters(?)(like amp)
+      - [ ] Deep
+      - [ ] Librarian
+      - [ ] Oracle
   - [ ] UI agnostic commands layer
-  - [ ] Modes or Characters(?)(like amp)
-    - [ ] Deep
-    - [ ] Librarian
-    - [ ] Oracle
   - [x] Extensions
+    - [ ] Remote extensions
     - [ ] Support https://agent-plugins.org/
     - [ ] Perhpas "sharing" as an extension
   - [ ] MCP
@@ -109,6 +111,8 @@ Eva is a distributed coding agent platform. It ships with a default terminal age
   - [ ] Firecracker? https://github.com/harmont-dev/hyper
 - [ ] Observability
   - [ ] Number of sessions, time taken, total token usage, failures etc.
+- [ ] Remote node connection cookie sharing
+  - [ ] Make it secure. Pluggable service which nodes can consult to get a cookie?
 - Explore https://github.com/elixir-vibe/vibe for further stuff
   - https://x.com/davydog187/status/2075320738261659775
 

@@ -1,21 +1,16 @@
 defmodule Eva.Core.Cluster.Protocol do
   @moduledoc """
-  What a node says when it joins, and what it can be told in reply.
+  What a node says about itself when asked, and why a host might not want it.
 
-  Both halves compile against this: the host runs the directory, the joining node runs the
-  client, and neither names a module belonging to the other. As with `Eva.Core.Extension.API`,
-  **the shapes here are the contract** — changing one is a breaking change even when the
-  function signature stays the same.
+  ## Asked, not told
 
-  The host's directory is addressed by registered name, so a joining node needs no pid and
-  no module from the host — `{Protocol.directory(), eva_node}` is enough.
+  Eva dials and asks; a node never goes looking for an Eva. So a `Description` is a reply,
+  and the refusals below are checked by the host *after* asking.
   """
 
   use TypedStruct
 
   @protocol_version 1
-
-  @directory Eva.Cluster
 
   @typedoc """
   What a member claims to be.
@@ -25,19 +20,26 @@ defmodule Eva.Core.Cluster.Protocol do
   """
   @type role :: :extension | :harness
 
-  @typedoc "Why the host refused to let a member join."
+  @typedoc """
+  Why a host would not take a member on.
+
+  `:not_consented` is the only one decided by the *other* side — the node declining to
+  serve this Eva.
+  """
   @type refusal ::
           {:protocol_version, mine :: pos_integer(), theirs :: pos_integer()}
           | {:core_version, mine :: String.t(), theirs :: String.t()}
           | {:name_taken, node()}
           | :not_allowed
+          | :not_consented
           | {:unknown_role, term()}
+          | {:unreachable, term()}
 
-  typedstruct module: Announcement do
+  typedstruct module: Description do
     @moduledoc """
-    Sent once per node.
+    What a node answers when Eva asks what it is.
 
-    `pid` is the member's own process — the host monitors it, and calls back to it to
+    `pid` is the member's own process — the Eva host monitors it, and calls back to it to
     instantiate the member for a particular session.
     """
 
@@ -56,17 +58,11 @@ defmodule Eva.Core.Cluster.Protocol do
   def protocol_version, do: @protocol_version
 
   @doc """
-  The registered name of the host's directory.
+  Builds this node's description of itself.
   """
-  @spec directory() :: atom()
-  def directory, do: @directory
-
-  @doc """
-  Builds an announcement for this node.
-  """
-  @spec announcement(role(), String.t(), pid()) :: Announcement.t()
-  def announcement(role, name, pid) when is_atom(role) and is_binary(name) and is_pid(pid) do
-    %Announcement{
+  @spec description(role(), String.t(), pid()) :: Description.t()
+  def description(role, name, pid) when is_atom(role) and is_binary(name) and is_pid(pid) do
+    %Description{
       protocol_version: @protocol_version,
       role: role,
       name: name,
@@ -98,11 +94,22 @@ defmodule Eva.Core.Cluster.Protocol do
     do: "built against eva_core #{theirs}, host is running #{mine}"
 
   def describe_refusal({:name_taken, node}),
-    do: "another node (#{node}) has already announced that name"
+    do: "another node (#{node}) is already serving that name"
 
   def describe_refusal(:not_allowed),
     do: "not in the host's allowlist — add it with mix eva.ext.add"
 
+  def describe_refusal(:not_consented),
+    do: "the node declined to serve this Eva — check its :serve list"
+
   def describe_refusal({:unknown_role, role}), do: "unknown role #{inspect(role)}"
+
+  # A mismatched cookie looks exactly like a wrong port or a
+  # node that is not running — the dialer is only told the connection failed.
+  def describe_refusal({:unreachable, _reason}),
+    do:
+      "could not be reached — check it is running, the port matches, and both machines " <>
+        "share a cluster cookie (mix eva.cluster.invite / join)"
+
   def describe_refusal(other), do: inspect(other)
 end

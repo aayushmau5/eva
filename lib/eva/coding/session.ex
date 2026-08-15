@@ -620,7 +620,9 @@ defmodule Eva.Coding.Session do
   end
 
   def handle_info({:cluster_member_down, %{role: :extension} = member}, %__MODULE__{} = state) do
-    extensions = ExtensionSet.drop(state.extensions, member.name, :shutdown)
+    # By slot, not name: a remote extension sits under `<machine>__<name>`, and dropping
+    # the bare name would leave it in the set with its tools pointing at a node that is gone.
+    extensions = ExtensionSet.drop(state.extensions, ExtensionSet.slot(member), :shutdown)
     {:noreply, rebind_extensions(%__MODULE__{state | extensions: extensions})}
   end
 

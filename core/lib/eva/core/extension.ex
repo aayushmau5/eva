@@ -26,6 +26,7 @@ defmodule Eva.Core.Extension do
   # Context gets passed to the extension callback functions
   typedstruct module: Context do
     field :name, String.t()
+    # The session's working directory — on the *session's* machine.
     field :cwd, String.t()
     field :model, String.t()
     # Passing provider_config so a subagent extension can spawn its own provider.
@@ -36,9 +37,30 @@ defmodule Eva.Core.Extension do
     field :extension_dir, String.t()
     # This extension's own entries, oldest first, replayed from the transcript.
     field :entries, [map()], default: []
+    # Which machine this extension is running on, as the session's Eva labels it, or `nil`
+    # when that is the same machine the session is on.
+    #
+    # `nil` is the ordinary case and means `cwd` and `entries` describe a disk this code can
+    # actually read. Anything else means they describe **another machine**, and opening them
+    # as local paths is a bug — `/etc/hosts` exists everywhere, and `~/project/config.exs`
+    # may exist on both boxes with different contents. Nothing errors when you get this
+    # wrong, which is why it is a field rather than a convention.
+    #
+    # `Context.same_machine?/1` is the comparison.
+    field :machine, String.t() | nil
     # Capability is a "bag of things" that the extension can ask the host to do.
     # Example: Eva.Extension.UI.confirm
     field :capabilities, module()
+
+    @doc """
+    Whether this context's paths belong to a disk this code can read.
+
+    False means `cwd`, `extension_dir` and `entries` describe another machine. Reading them
+    from here will not fail — it will open a different file with the same name — so this is
+    the check.
+    """
+    @spec same_machine?(t()) :: boolean()
+    def same_machine?(%__MODULE__{machine: machine}), do: is_nil(machine)
   end
 
   @callback setup(Context.t()) :: {:ok, Eva.Core.Extension.Spec.t()} | {:error, term()}
