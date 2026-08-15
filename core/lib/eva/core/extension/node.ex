@@ -60,12 +60,16 @@ defmodule Eva.Core.Extension.Node do
   * `:port` — offer this node to other machines, on this machine's address at this port.
     Absent, it listens on loopback and only its own machine can see it.
   * `:serve` — which Evas may attach: `:any` (the default) or a list of node names
+  * `:epmd` — register with epmd, `true` by default. `false` needs no epmd running, at the
+    cost of being undiscoverable by name on this machine — for a node only ever reached
+    through `mix eva.ext.remote`. See `Eva.Core.Cluster.Epmdless`.
   """
   @type option ::
           {:name, String.t()}
           | {:module, module()}
           | {:port, :inet.port_number()}
           | {:serve, :any | [node()]}
+          | {:epmd, boolean()}
 
   @spec start_link([option()]) :: GenServer.on_start()
   def start_link(opts) do
@@ -107,6 +111,7 @@ defmodule Eva.Core.Extension.Node do
       module: Keyword.fetch!(opts, :module),
       port: Keyword.get(opts, :port),
       serve: Keyword.get(opts, :serve, :any),
+      epmd: Keyword.get(opts, :epmd, true),
       # One generation per Eva. Each mints from its own private counter.
       generations: %{}
     }
@@ -228,7 +233,7 @@ defmodule Eva.Core.Extension.Node do
   defp listen_as(%{port: port}), do: {:reachable, port}
 
   defp ensure_distributed(%{name: name} = state) do
-    case Listener.start(fn host -> node_name(name, host) end, listen_as(state)) do
+    case Listener.start(fn host -> node_name(name, host) end, listen_as(state), epmd: state.epmd) do
       {:ok, _node} -> :ok
       {:error, reason} -> {:error, reason}
     end

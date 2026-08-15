@@ -34,7 +34,7 @@ defmodule Eva.Core.Cluster.Listener do
 
   require Logger
 
-  alias Eva.Core.Cluster.{Cookie, Host}
+  alias Eva.Core.Cluster.{Cookie, Epmdless, Host}
 
   @typedoc """
   How reachable this node intends to be.
@@ -56,9 +56,13 @@ defmodule Eva.Core.Cluster.Listener do
   `build_name` is given this machine's address and returns the node name.
 
   Already being distributed is success: the name is whatever it already was.
+
+  `:epmd` (default `true`) registers with epmd, which is what makes this node findable by
+  name on its own machine. `false` needs no epmd running at all — see
+  `Eva.Core.Cluster.Epmdless`.
   """
-  @spec start((String.t() -> node()), binding()) :: {:ok, node()} | {:error, term()}
-  def start(build_name, binding) when is_function(build_name, 1) do
+  @spec start((String.t() -> node()), binding(), keyword()) :: {:ok, node()} | {:error, term()}
+  def start(build_name, binding, opts \\ []) when is_function(build_name, 1) do
     if Node.alive?() do
       warn_not_ours()
       apply_cookie()
@@ -70,6 +74,7 @@ defmodule Eva.Core.Cluster.Listener do
     else
       with {:ok, host, address} <- resolve(binding) do
         configure(address, binding)
+        configure_epmd(Keyword.get(opts, :epmd, true))
         boot(build_name.(host), host, binding)
       end
     end
@@ -123,6 +128,17 @@ defmodule Eva.Core.Cluster.Listener do
           {:error, reason} -> {:error, {:unresolvable_host, host, reason}}
         end
     end
+  end
+
+  # Read once, when distribution comes up, so this must precede `:net_kernel.start/2`.
+  # `true` leaves the VM's default alone rather than naming `:erl_epmd`: a host that
+  # installed a client of its own — Eva does — keeps it.
+  defp configure_epmd(true), do: :ok
+
+  defp configure_epmd(false) do
+    {:module, _} = Code.ensure_loaded(Epmdless)
+    Application.put_env(:kernel, :epmd_module, Epmdless)
+    Logger.info("not registering with epmd: this node is reached by address only")
   end
 
   defp configure(address, binding) do
