@@ -1,27 +1,29 @@
 ---
-name: write-extension
-description: Write an Eva extension — an .exs file that adds tools, system-prompt guidelines, tool-call hooks, input rewriting, slash commands, or event handlers to a coding session. Use when asked to create, modify, or debug an Eva extension.
+name: write-extension-local
+description: Write an Eva extension that runs on the same machine as the session — a script (.exs) compiled into Eva's VM, or a Mix project on its own local node. Use when asked to create, modify, or debug a local Eva extension.
 ---
 
-# Writing an Eva extension
+# Writing a local Eva extension
 
-Two ways to ship one, and the difference is where it runs:
+Two ways to ship one, both running on the same machine as the session:
 
 | | | |
 |---|---|---|
 | **script** | one `.exs` file | Eva compiles it into its own VM at session start |
-| **project** | a Mix project | its own BEAM node, which announces itself to Eva |
+| **project** | a Mix project | its own BEAM node on this machine, which Eva finds and dials |
 
-Everything below is about scripts, and **all of it applies unchanged to a project** — same
-`setup/1`, same callbacks, same `API`. A project only differs in packaging: it has its own
-`mix.exs` and its own dependencies, it starts `Eva.Core.Extension.Node` from its application,
-and you start it yourself (`mix eva.ext.start <name>`, or `iex -S mix` while developing).
-Reach for one when the extension needs libraries of its own, or when one file has stopped
-being enough. See [extension-nodes.md](../../../docs/extension-nodes.md).
+Everything about the contract — `setup/1`, the `%Spec{}` fields, every callback, the `API`
+— is identical in both. A project only differs in packaging: it has its own `mix.exs` and
+dependencies, starts `Eva.Core.Extension.Node` from its application, and you start it
+yourself. Reach for a project when the extension needs libraries of its own, or when one
+file has stopped being enough. See [Project extensions](#project-extensions).
 
-An extension is one `.exs` file that Eva compiles into the running VM at session start.
+An extension that runs on *another* machine is also a project — see the
+`write-extension-remote` skill for what changes there.
 
-**Where it goes.** `~/.eva/extensions/<name>.exs` for every project, or
+## Where it goes (scripts)
+
+`~/.eva/extensions/<name>.exs` for every project, or
 `<project>/.eva/extensions/<name>.exs` for one. A directory works too, as
 `<name>/extension.exs`, when the extension needs sibling files. The **filename is the
 extension's name** — that name appears in diagnostics, namespaces its stored data, and is
@@ -136,6 +138,8 @@ end
    process that didn't exist when `setup/1` ran. Close over `ctx.cwd`, don't re-derive it.
 4. **Pick a name no one else has.** A tool whose name matches a built-in (`read`, `write`,
    `edit`, `bash`) or an earlier extension's tool is **silently dropped** with a diagnostic.
+   An extension on another machine is exempt: its tools are prefixed with that machine, so
+   they cannot collide with yours.
 
 For slow tools, report progress — it reaches the UI without touching the transcript:
 
@@ -240,7 +244,8 @@ def handle_request(:bump, state), do: {state.count + 1, %{state | count: state.c
 ```
 
 `init/1` builds your state; every other callback receives and returns it. A command name
-already taken by another extension is dropped with a diagnostic.
+already taken by another extension is dropped, and the loser is named in the diagnostics —
+first registered wins.
 
 **What you reply with is shown to the user**, and three shapes are understood: `"text"`,
 `{:text, "text"}`, and `{:error, reason}`. Anything else is `inspect`ed onto their screen —
@@ -283,10 +288,91 @@ Passed to `setup/1`, `init/1`, and whatever you close over:
   model:           "deepseek-v4-pro",
   provider_config: %OpenAICompatible{},   # start your own provider (subagents)
   session_pid:     #PID<0.90.0>,
-  resources:       %Resources{},
-  extension_dir:   "/Users/…/.eva/extensions"   # find sibling files
+  extension_dir:   "/Users/…/.eva/extensions",  # find sibling files
+  entries:         [%{"key" => "value"}],       # your own, from `API.append_entry/2`
+  machine:         nil,                         # always nil locally
+  capabilities:    Eva.Extension.Capabilities   # ask the user, spawn a subagent
 }
 ```
+
+`machine` is `nil` whenever the extension and the session are on the same machine, which is
+every script and every project node you started yourself. It only becomes a label in the
+remote case — see the `write-extension-remote` skill.
+
+---
+
+## Project extensions
+
+A project is a normal Mix project that depends on `eva_core` and starts
+`Eva.Core.Extension.Node` from its application. The module naming and contract rules above
+apply unchanged.
+
+**`mix.exs`** — depend on `eva_core`, and name the application module:
+
+```elixir
+defmodule MyExt.MixProject do
+  use Mix.Project
+
+  def project do
+    [app: :eva_my_ext, version: "0.1.0", elixir: "~> 1.20", deps: deps()]
+  end
+
+  def application do
+    [extra_applications: [:logger], mod: {Eva.Extension.MyExt.Application, []}]
+  end
+
+  defp deps do
+    # The contract this extension is written against. `core/` is the `eva_core`
+    # library inside the Eva repo; depend on it via a sparse git checkout, or set
+    # `EVA_CORE_PATH` to point at a local checkout while developing.
+    [{:eva_core, git: "https://github.com/you/eva.git", sparse: "core"}]
+  end
+end
+```
+
+**The application module** — start your own children, then `Eva.Core.Extension.Node`:
+
+```elixir
+defmodule Eva.Extension.MyExt.Application do
+  use Application
+
+  @impl true
+  def start(_type, _args) do
+    children = [
+      # ...your own processes...
+      {Eva.Core.Extension.Node, name: "my_ext", module: Eva.Extension.MyExt}
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__.Supervisor)
+  end
+end
+```
+
+`name` must match the module's namespace (`Eva.Extension.MyExt` ↔ `"my_ext"`). `eva_core`'s
+own application starts the bus, the process registry, the supervisor, and the tool registry
+— `Application.ensure_all_started(:eva_core)` is the whole runtime, so there is no checklist.
+
+**Register and start it** from the Eva project:
+
+```bash
+mix eva.ext.add ../my_ext       # register (path or git URL); also the trust decision
+mix eva.ext.start my_ext        # start the node, detached
+mix eva.ext.list                # registered, and whether each one is connected
+mix eva.ext.stop my_ext
+mix eva.ext.remove my_ext
+```
+
+The node `mix run --no-halt`s and sits there; a running Eva finds it on its next scan, a
+second or two later. It keeps running across Eva restarts, and it can be started before Eva
+is — there is nothing for it to wait for.
+
+**In development, skip the commands.** `iex -S mix` in the extension's own project announces
+on boot, and `r Eva.Extension.MyExt` recompiles a module into a live session. That loop is
+the payoff a project has over a script.
+
+The node is loopback-only by default — only this machine can reach it, which is exactly
+right for a local extension. Running one on another machine is the `write-extension-remote`
+skill.
 
 ---
 
