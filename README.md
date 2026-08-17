@@ -8,6 +8,14 @@ A coding harness built in Elixir.
 
 ![under construction](https://cyber.dabamos.de/88x31/construction.gif)
 
+## Running (to be refactored later)
+
+Start Eva with the Erlang flag required for its hub-and-spoke extension topology:
+
+```bash
+ERL_FLAGS="-kernel prevent_overlapping_partitions false"
+```
+
 # Idea
 
 Current ideas, subject to change.
