@@ -266,10 +266,7 @@ defmodule Eva.ClusterSetTest do
     assert info.running?
   end
 
-  test "an extension that appears later joins the session", %{
-    remote: remote,
-    resources: resources
-  } do
+  test "an extension that appears later joins the session", %{remote: remote} do
     # A set that has never heard of it — the state a session is in when someone runs
     # `mix eva.ext.start` a minute after opening Eva.
     empty = Set.empty()
@@ -282,6 +279,16 @@ defmodule Eva.ClusterSetTest do
 
     assert Set.run_command(set, "fixture", "later") ==
              {:text, "fixture on #{remote.node} says later"}
+  end
+
+  test "replaying an extension already loaded into the set is a no-op", %{
+    resources: resources
+  } do
+    set = Set.load(resources, self(), %{cwd: "/tmp/project"})
+    {:ok, member} = Cluster.fetch(:extension, "fixture")
+
+    assert Set.add_member(set, member, self(), %{cwd: "/tmp/project"}) == set
+    assert set.diagnostics == []
   end
 
   test "a local script of the same name wins", %{resources: resources} do
@@ -319,6 +326,14 @@ defmodule Eva.ClusterSetTest do
 
     assert Map.has_key?(set.loaded, "fixture")
     refute Map.has_key?(set.remote, "fixture")
+
+    {:ok, member} = Cluster.fetch(:extension, "fixture")
+    announced = Set.add_member(set, member, self(), %{cwd: "/tmp/project"})
+
+    assert announced.diagnostics == [
+             "fixture is on #{member.node}, but a local extension already has that name — " <>
+               "the local one is being used"
+           ]
   end
 
   test "the node going away drops the extension from the set", %{

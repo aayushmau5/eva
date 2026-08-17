@@ -98,9 +98,16 @@ defmodule Eva.Extension.Set do
       not member_enabled?(set.overrides, member) ->
         set
 
+      # `load/3` takes a snapshot of the directory, then the session subscribes to future
+      # changes. Subscribing replays that same snapshot so nothing can race between those
+      # two operations. A member already filed under this slot is therefore an ordinary
+      # duplicate announcement, not a collision.
+      Map.has_key?(set.members, slot) ->
+        set
+
       # Only a real clash now — a *local* extension of the same name, since a remote one
       # gets its own slot. A file on disk wins: it is specific to the project you are in.
-      slot in set.order ->
+      Map.has_key?(set.loaded, slot) ->
         add_diagnostic(
           set,
           "#{member.name} is on #{member.node}, but a local extension already " <>
