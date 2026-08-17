@@ -2,7 +2,7 @@
 
 ![shinji](./shinji.jpg)
 
-A coding harness built in Elixir, inspired by [tau](https://twotimespi.dev/).
+A coding harness built in Elixir.
 
 > Work in progress — things may move, break, and change.
 

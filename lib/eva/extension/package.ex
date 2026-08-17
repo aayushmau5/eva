@@ -296,9 +296,27 @@ defmodule Eva.Extension.Package do
     "'" <> String.replace(to_string(part), "'", "'\\''") <> "'"
   end
 
-  # Nothing to tell it. The child does not look for an Eva — it comes up, sits there, and
-  # is found. Which Evas it will then serve is its own `:serve` setting, not ours to pass.
-  defp environment(_resources, _opts), do: []
+  # `global` expects a full mesh, while Eva uses hub-and-spoke connections. Eva's VM must
+  # disable overlapping-partition prevention; setting it here also protects an extension
+  # shared by Evas that cannot see each other.
+  defp environment(_resources, _opts) do
+    [{"ERL_FLAGS", erl_flags()}]
+  end
+
+  @doc """
+  The VM flags an extension node is started with.
+
+  Manual launches must set `ERL_FLAGS` themselves.
+  """
+  @spec erl_flags() :: String.t()
+  def erl_flags do
+    existing = System.get_env("ERL_FLAGS", "")
+    flag = "-kernel prevent_overlapping_partitions false"
+
+    if String.contains?(existing, "prevent_overlapping_partitions"),
+      do: existing,
+      else: String.trim(existing <> " " <> flag)
+  end
 
   defp resolve(resources, source) do
     if git_url?(source), do: clone(resources, source), else: local(source)

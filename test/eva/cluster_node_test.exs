@@ -51,8 +51,11 @@ defmodule Eva.ClusterNodeTest do
 
     {:ok, _pid} = ClusterNode.serve(remote, "fixture", Eva.Extension.Fixture)
 
-    assert_receive {:cluster_member_up, member}, 5_000
-    assert member.name == "fixture"
+    # Matched by name rather than taking the first message: Eva dials every extension
+    # node on this machine, and a real one the developer happens to be running joins
+    # this cluster too — including immediately, since `subscribe/0` replays members
+    # that were already connected.
+    assert_receive {:cluster_member_up, %{name: "fixture"} = member}, 5_000
     assert member.node == remote.node
     assert member.core_version == Eva.Core.Cluster.Protocol.core_version()
 
@@ -165,12 +168,14 @@ defmodule Eva.ClusterNodeTest do
   test "the node going away removes it, and the session hears", %{remote: remote} do
     :ok = Cluster.subscribe()
     {:ok, _pid} = ClusterNode.serve(remote, "fixture", Eva.Extension.Fixture)
-    assert_receive {:cluster_member_up, _member}, 5_000
+    assert_receive {:cluster_member_up, %{name: "fixture"}}, 5_000
 
     ClusterNode.stop(remote)
 
     assert_receive {:cluster_member_down, %{name: "fixture"}}, 5_000
-    assert Cluster.members(:extension) == []
+    # Only that the fixture is gone: any extension node the developer is running on
+    # this machine is also in the directory, and is not this test's business.
+    refute Enum.any?(Cluster.members(:extension), &(&1.name == "fixture"))
   end
 
   test "an extension refused by the allowlist stays out", %{remote: remote} do
@@ -252,8 +257,10 @@ defmodule Eva.ClusterSetTest do
     # It runs over there, and the command round-trips.
     assert Set.run_command(set, "fixture", "hi") == {:text, "fixture on #{remote.node} says hi"}
 
-    [info] = Set.list(set)
-    assert info.name == "fixture"
+    # By name, not by being the only one: any extension node reachable with this cookie
+    # joins here too — including one running on another machine — and `Cluster.subscribe/0`
+    # replays those immediately rather than a scan later.
+    info = Enum.find(Set.list(set), &(&1.name == "fixture"))
     assert info.node == remote.node
     assert info.path == nil
     assert info.running?
@@ -303,7 +310,13 @@ defmodule Eva.ClusterSetTest do
 
     set = Set.load(resources, self(), %{cwd: "/tmp/project"})
 
-    assert Set.guidelines(set) == ["the local one"]
+    # The local script's guideline is present and the served node's is not — that is what
+    # "wins" means here. Not an exact list: other extension nodes on this machine
+    # contribute their own guidelines and are not what this test is about.
+    guidelines = Set.guidelines(set)
+    assert "the local one" in guidelines
+    refute "fixture guideline for /tmp/project" in guidelines
+
     assert Map.has_key?(set.loaded, "fixture")
     refute Map.has_key?(set.remote, "fixture")
   end
@@ -322,9 +335,11 @@ defmodule Eva.ClusterSetTest do
 
     dropped = Set.drop(set, pid, :shutdown)
 
-    assert dropped.order == []
-    assert dropped.remote == %{}
-    assert dropped.members == %{}
+    # Only the fixture's departure is asserted: another machine's extension node may be
+    # in this set too, and dropping this one says nothing about that one.
+    refute "fixture" in dropped.order
+    refute Map.has_key?(dropped.remote, "fixture")
+    refute Map.has_key?(dropped.members, "fixture")
   end
 
   test "shutdown stops the remote extension", %{resources: resources} do
@@ -392,8 +407,16 @@ defmodule Eva.ClusterToolsTest do
     end
   end
 
+  # By name, never "the only tool in the set". Eva dials every extension node it can
+  # reach, so a real one the developer is running contributes its tools here too — and
+  # a developer working on extensions always has one running.
+  defp fixture_tool(set) do
+    Enum.find(Set.tools(set), &(&1.name == "fixture_echo")) ||
+      flunk("fixture_echo not in the set")
+  end
+
   test "a remote tool arrives without its closure", %{set: set, remote: remote} do
-    [tool] = Set.tools(set)
+    tool = fixture_tool(set)
 
     assert tool.name == "fixture_echo"
     assert tool.description == "Echoes its argument back"
@@ -407,7 +430,7 @@ defmodule Eva.ClusterToolsTest do
   end
 
   test "calling it runs the real body on the other node", %{set: set} do
-    [tool] = Set.tools(set)
+    tool = fixture_tool(set)
 
     result = tool.executor.(%{"text" => "over there"}, nil)
 
@@ -415,7 +438,7 @@ defmodule Eva.ClusterToolsTest do
   end
 
   test "a raise on the far side comes back as an error, not a hang", %{set: set, remote: remote} do
-    [tool] = Set.tools(set)
+    tool = fixture_tool(set)
 
     # Replace the registered executor with one that blows up, the way a real tool would.
     register(remote, [:exploding])
@@ -426,7 +449,7 @@ defmodule Eva.ClusterToolsTest do
   end
 
   test "a tool nobody registered says so rather than crashing", %{set: set, remote: remote} do
-    [tool] = Set.tools(set)
+    tool = fixture_tool(set)
 
     register(remote, [])
 

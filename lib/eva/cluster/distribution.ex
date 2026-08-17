@@ -31,10 +31,38 @@ defmodule Eva.Cluster.Distribution do
   @spec ensure_started(keyword()) :: {:ok, node()} | :disabled | {:error, term()}
   def ensure_started(opts \\ []) do
     if Keyword.get(opts, :enabled?, enabled?()) do
+      check_vm_flags()
       start_node(opts)
     else
       :disabled
     end
+  end
+
+  @doc """
+  Warns if this VM will tear down its own extension connections.
+
+  Not an error: one extension works fine without the flag, and refusing to start would
+  be worse than a degraded cluster. But the symptom — extensions joining and leaving on
+  a loop — looks like a network problem or a broken extension, and costs an hour to
+  trace back to a VM flag. So it is said once, plainly, at the point it starts to matter.
+  """
+  @spec check_vm_flags() :: :ok
+  def check_vm_flags do
+    unless :application.get_env(:kernel, :prevent_overlapping_partitions) == {:ok, false} do
+      Logger.warning("""
+      extensions on more than one node will disconnect and reconnect on a loop.
+
+      `global` treats Eva's hub-and-spoke topology as a healed partition. Start Eva with
+      `bin/eva`, which sets the flags, or set this yourself:
+
+          ERL_FLAGS="-kernel prevent_overlapping_partitions false"
+
+      It must be a boot flag — `global` reads it once, when the kernel starts, so config
+      and `Application.put_env/3` are both too late.
+      """)
+    end
+
+    :ok
   end
 
   @doc """

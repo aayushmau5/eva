@@ -108,6 +108,12 @@ defmodule Eva.Cluster do
 
   Generally called by a session.
   Subscribers are monitored, so a session going away unsubscribes itself.
+
+  **Distributed members already connected are replayed as `:cluster_member_up`** before this
+  returns. Discovery's first scan happens when the application boots, long before any
+  session exists, so without the replay a subscriber only ever learns about nodes that
+  happen to join *after* it — and a node started before Eva, which is the normal way to
+  run one, would never be taken on by any session.
   """
   @spec subscribe() :: :ok
   def subscribe, do: call({:subscribe, self()})
@@ -247,6 +253,12 @@ defmodule Eva.Cluster do
       {:reply, :ok, state}
     else
       ref = Process.monitor(pid)
+
+      state.members
+      |> Map.values()
+      |> Enum.sort_by(& &1.generation)
+      |> Enum.each(&send(pid, {:cluster_member_up, &1}))
+
       {:reply, :ok, put_in(state.subscribers[pid], ref)}
     end
   end
