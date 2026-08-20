@@ -52,12 +52,19 @@ defmodule Eva.MCPNodeTest do
     # exactly backwards for the test that exists to catch contract drift. `System.cmd/3`
     # hands our environment to the child, so setting it here is enough to redirect it.
     previous_core_path = System.get_env("EVA_CORE_PATH")
+    previous_cookie_path = System.get_env("EVA_COOKIE_PATH")
     System.put_env("EVA_CORE_PATH", Path.expand("core"))
+    System.put_env("EVA_COOKIE_PATH", Application.fetch_env!(:eva_core, :cookie_path))
 
     on_exit(fn ->
       case previous_core_path do
         nil -> System.delete_env("EVA_CORE_PATH")
         path -> System.put_env("EVA_CORE_PATH", path)
+      end
+
+      case previous_cookie_path do
+        nil -> System.delete_env("EVA_COOKIE_PATH")
+        path -> System.put_env("EVA_COOKIE_PATH", path)
       end
     end)
 

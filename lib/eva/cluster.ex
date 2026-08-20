@@ -8,10 +8,10 @@ defmodule Eva.Cluster do
 
   ## Eva does the reaching
 
-  A scan enumerates the extension nodes on this machine, asks each one what it is, checks
-  the answer, and attaches. Only the dialled side needs a stable identity, and that is the
-  extension node — one per name, long-lived — rather than Eva, of which there may be
-  several per machine, coming and going with your work.
+  A scan enumerates locally discoverable and configured extension nodes, plus nodes that
+  have already connected to Eva. It asks each candidate what it is, checks the answer, and
+  attaches. Only the extension node needs a stable identity — one per name, long-lived —
+  rather than Eva, of which there may be several per machine, coming and going with your work.
 
   Joining is not instant: `mix eva.ext.start mcp` lands on the next
   scan rather than the moment it comes up. What it buys is one path — the same one will
@@ -397,19 +397,22 @@ defmodule Eva.Cluster do
   end
 
   @doc false
-  # Everything worth dialling: this machine's extension nodes, found through epmd, plus the
-  # ones a registry entry names outright. Two sources, one list, and nothing downstream can
-  # tell which is which — a remote extension is not a special case anywhere except here.
+  # Everything worth asking: this machine's extension nodes found through epmd, the ones a
+  # registry entry names outright, and nodes that established the connection themselves. The
+  # last group is what makes a foregrounded phone work without a host-to-phone dial path.
   @spec look(MapSet.t(node()), Resources.t()) ::
           [{node(), Description.t() | {:error, term()}}]
   def look(known, %Resources{} = resources) do
     # Re-read every scan, so editing the registry on a running Eva takes effect.
     :ok = Epmd.install(resources)
 
-    nodes = Discovery.extension_nodes() ++ configured(resources)
+    nodes = Discovery.extension_nodes() ++ configured(resources) ++ Node.list(:connected)
 
-    for node <- Enum.uniq(nodes), not MapSet.member?(known, node) do
-      {node, ask(node)}
+    for node <- Enum.uniq(nodes),
+        not MapSet.member?(known, node),
+        result = ask(node),
+        result != :not_extension do
+      {node, result}
     end
   end
 
@@ -420,7 +423,10 @@ defmodule Eva.Cluster do
   end
 
   defp ask(node) do
-    :erpc.call(node, Eva.Core.Extension.Node, :describe, [], @ask_timeout)
+    case :erpc.call(node, :erlang, :whereis, [Eva.Core.Extension.Node], @ask_timeout) do
+      :undefined -> :not_extension
+      _pid -> :erpc.call(node, Eva.Core.Extension.Node, :describe, [], @ask_timeout)
+    end
   catch
     # when the node is unreachable, still booting, or gone
     # Ordinary; the next scan asks again.

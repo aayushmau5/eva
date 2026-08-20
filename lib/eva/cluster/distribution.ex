@@ -7,15 +7,24 @@ defmodule Eva.Cluster.Distribution do
 
       config :eva, distribution: true
 
-  ## Loopback, always
+  ## Loopback unless explicitly offered
 
-  Eva's listener is bound to `127.0.0.1` and it is named for that. Nothing on any network
-  can reach it, good for machine running sessions.
+  Eva's listener is bound to `127.0.0.1` and named for that by default. Nothing on another
+  machine can reach it, which is right when Eva discovers and dials every extension itself.
 
-  The socket exists anyway because a node without one has its connections marked *hidden*,
-  and hidden nodes are excluded from cluster-wide services — `:pg` among them, which
-  `Eva.Core.Bus` runs on. So the listener is not a service being protected; it is a socket
-  nobody uses, put somewhere nobody can reach.
+  The loopback socket still matters even when Eva makes every connection. A node without a
+  listener has its outgoing connections marked *hidden*, and hidden nodes are excluded from
+  cluster-wide services — `:pg` among them, which `Eva.Core.Bus` runs on.
+
+  A member that must initiate its own connection, such as a mobile extension, changes that trust
+  boundary: Eva now intentionally accepts an inbound BEAM connection from the tailnet. Giving
+  `:distribution` a port opts into a listener bound specifically to Eva's configured or detected
+  tailnet address. The connected node then appears in Eva's normal cluster scan and goes through
+  the same description, allowlist, consent and attach flow as a node Eva dialled:
+
+      config :eva, distribution: [port: 9001]
+
+  With no non-loopback address, startup fails instead of silently exposing another interface.
   """
 
   require Logger
@@ -30,6 +39,8 @@ defmodule Eva.Cluster.Distribution do
   """
   @spec ensure_started(keyword()) :: {:ok, node()} | :disabled | {:error, term()}
   def ensure_started(opts \\ []) do
+    opts = Keyword.merge(configured_options(), opts)
+
     if Keyword.get(opts, :enabled?, enabled?()) do
       check_vm_flags()
       start_node(opts)
@@ -69,18 +80,47 @@ defmodule Eva.Cluster.Distribution do
   Whether distribution is switched on.
   """
   @spec enabled?() :: boolean()
-  def enabled?, do: Application.get_env(:eva, :distribution, false)
+  def enabled? do
+    case Application.get_env(:eva, :distribution, false) do
+      true -> true
+      opts when is_list(opts) -> Keyword.get(opts, :enabled?, true)
+      _other -> false
+    end
+  end
+
+  @doc false
+  @spec listener_binding(keyword()) :: Eva.Core.Cluster.Listener.binding()
+  def listener_binding(opts) do
+    case Keyword.get(opts, :port) do
+      nil ->
+        :loopback
+
+      port when is_integer(port) and port in 1..65_535 ->
+        {:reachable, port}
+
+      port ->
+        raise ArgumentError,
+              "distribution port must be an integer from 1 to 65535, got: #{inspect(port)}"
+    end
+  end
 
   # -- Private --
 
   defp start_node(opts) do
-    case Listener.start(name_builder(opts), :loopback) do
+    case Listener.start(name_builder(opts), listener_binding(opts)) do
       {:ok, node} ->
         {:ok, node}
 
       {:error, reason} ->
         Logger.error("could not start distribution: #{inspect(reason)}")
         {:error, reason}
+    end
+  end
+
+  defp configured_options do
+    case Application.get_env(:eva, :distribution, false) do
+      opts when is_list(opts) -> opts
+      _other -> []
     end
   end
 

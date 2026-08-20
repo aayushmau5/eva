@@ -74,4 +74,15 @@ defmodule Eva.Cluster.DistributionTest do
     assert Distribution.node_name("127.0.0.1") ==
              :"eva_#{System.pid()}_devbox_example_com@127.0.0.1"
   end
+
+  test "listening stays on loopback unless a port is explicitly configured" do
+    assert Distribution.listener_binding([]) == :loopback
+    assert Distribution.listener_binding(port: 9_001) == {:reachable, 9_001}
+  end
+
+  test "an invalid reachable port is rejected before distribution starts" do
+    assert_raise ArgumentError, ~r/distribution port/, fn ->
+      Distribution.listener_binding(port: 70_000)
+    end
+  end
 end

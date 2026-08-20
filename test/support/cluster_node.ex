@@ -16,20 +16,22 @@ defmodule Eva.Test.ClusterNode do
   @doc """
   Boots a node with this VM's code paths and connects it.
 
-  The name is prefixed `eva_ext_`, because that is how Eva finds extension nodes now that
-  it does the dialling — `Eva.Cluster.Discovery` enumerates epmd and filters on that
-  prefix, so a peer called anything else is invisible however well it works.
+  The name is prefixed `eva_ext_` by default, because that is how Eva finds extension nodes
+  through epmd. Pass `extension_name?: false` for a peer that must only be found through
+  Eva's already-connected-node scan, like a phone that dialled the host first.
 
   Requires the test VM to be distributed — run with `mix test.dist`.
   """
-  @spec start(atom()) :: {:ok, %{peer: pid(), node: node()}} | {:error, term()}
-  def start(name) do
+  @spec start(atom(), keyword()) :: {:ok, %{peer: pid(), node: node()}} | {:error, term()}
+  def start(name, opts \\ []) do
     if Node.alive?() do
-      paths = Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
+      kernel = [~c"-kernel", ~c"prevent_overlapping_partitions", ~c"false"]
+      paths = kernel ++ Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
+      name = if Keyword.get(opts, :extension_name?, true), do: :"eva_ext_#{name}", else: name
 
       {:ok, peer, node} =
         :peer.start_link(%{
-          name: :"eva_ext_#{name}",
+          name: name,
           host: ~c"127.0.0.1",
           longnames: true,
           connection: :standard_io,
@@ -37,6 +39,8 @@ defmodule Eva.Test.ClusterNode do
         })
 
       :peer.call(peer, :erlang, :set_cookie, [:erlang.get_cookie()])
+      cookie_path = Application.fetch_env!(:eva_core, :cookie_path)
+      :peer.call(peer, Application, :put_env, [:eva_core, :cookie_path, cookie_path])
       true = Node.connect(node)
 
       {:ok, %{peer: peer, node: node}}

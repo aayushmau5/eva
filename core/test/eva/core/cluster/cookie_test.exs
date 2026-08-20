@@ -13,8 +13,10 @@ defmodule Eva.Core.Cluster.CookieTest do
     dir = Path.join(System.tmp_dir!(), "cookie_#{System.unique_integer([:positive])}")
     path = Path.join(dir, "cookie")
     previous = Application.get_env(:eva_core, :cookie_path)
+    previous_env = System.get_env("EVA_COOKIE_PATH")
 
     Application.put_env(:eva_core, :cookie_path, path)
+    System.delete_env("EVA_COOKIE_PATH")
 
     on_exit(fn ->
       File.rm_rf!(dir)
@@ -22,6 +24,10 @@ defmodule Eva.Core.Cluster.CookieTest do
       if previous,
         do: Application.put_env(:eva_core, :cookie_path, previous),
         else: Application.delete_env(:eva_core, :cookie_path)
+
+      if previous_env,
+        do: System.put_env("EVA_COOKIE_PATH", previous_env),
+        else: System.delete_env("EVA_COOKIE_PATH")
     end)
 
     %{path: path}
@@ -33,6 +39,18 @@ defmodule Eva.Core.Cluster.CookieTest do
     assert File.exists?(path)
 
     assert {:ok, ^first} = Cookie.ensure()
+  end
+
+  test "can take an isolated cookie path from the environment" do
+    Application.delete_env(:eva_core, :cookie_path)
+    path = Path.join(System.tmp_dir!(), "cookie_env_#{System.unique_integer([:positive])}")
+    System.put_env("EVA_COOKIE_PATH", path)
+
+    assert Cookie.path() == path
+    assert {:ok, _cookie} = Cookie.ensure()
+    assert File.exists?(path)
+
+    File.rm!(path)
   end
 
   test "is not the machine's Erlang cookie" do

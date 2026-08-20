@@ -25,14 +25,18 @@ defmodule Eva.ClusterNodeTest do
     :ok
   end
 
-  setup do
+  setup context do
     # `allow: nil` because none of this is about the allowlist — the default reads the
     # registry, and these fixtures were never registered.
     # A short grace: a node being killed is indistinguishable from a connection dropping,
     # so the real 8 seconds would be spent waiting in every test that stops a peer.
     start_supervised!({Eva.Cluster, allow: nil, grace: 200})
 
-    {:ok, remote} = ClusterNode.start(:"fixture_#{System.unique_integer([:positive])}")
+    {:ok, remote} =
+      ClusterNode.start(:"fixture_#{System.unique_integer([:positive])}",
+        extension_name?: context[:plain_node] != true
+      )
+
     on_exit(fn -> ClusterNode.stop(remote) end)
 
     %{remote: remote}
@@ -62,6 +66,23 @@ defmodule Eva.ClusterNodeTest do
     # `in` rather than an exact list: Eva dials every extension node on the machine, and a
     # peer from an earlier test may still be shutting down. Not what this is about.
     assert member in Cluster.members(:extension)
+  end
+
+  @tag :plain_node
+  test "an already-connected node is picked up by the normal scan", %{remote: remote} do
+    :ok = Cluster.subscribe()
+
+    {:ok, _pid} = ClusterNode.serve(remote, "mobile", Eva.Extension.Fixture)
+    assert_receive {:cluster_member_up, %{name: "mobile", node: node}}, 5_000
+    assert node == remote.node
+    assert {:ok, %{name: "mobile"}} = Cluster.fetch(:extension, "mobile")
+  end
+
+  test "a connected node without an extension is ignored quietly", %{remote: remote} do
+    :ok = Cluster.scan_now()
+
+    refute Map.has_key?(Cluster.refusals(), remote.node)
+    refute Enum.any?(Cluster.members(:extension), &(&1.node == remote.node))
   end
 
   test "the extension runs on the other node, not here", %{remote: remote} do

@@ -71,7 +71,7 @@ defmodule Eva.MixProject do
       # Distributed tests need a named VM, and a VM cannot be named after it has booted
       # without breaking references already held to `nonode@nohost`.
       "test.dist": [
-        "cmd elixir --name eva_test@127.0.0.1 -S mix test --only distributed"
+        "cmd elixir --erl \"-kernel prevent_overlapping_partitions false\" --name eva_test@127.0.0.1 -S mix test --only distributed"
       ]
     ]
   end

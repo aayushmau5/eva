@@ -12,6 +12,9 @@ defmodule Eva.Core.Cluster.Cookie do
 
       ~/.eva/cookie   mode 0600, generated the first time distribution comes up
 
+  Set `config :eva_core, :cookie_path` or `EVA_COOKIE_PATH` when several OS processes
+  need an isolated shared cookie, such as an integration test.
+
   **anyone with this file can run code on any member that listens.**
   The tailnet is the perimeter; this is the credential.
 
@@ -36,7 +39,7 @@ defmodule Eva.Core.Cluster.Cookie do
   def path do
     case Application.get_env(:eva_core, :cookie_path) do
       path when is_binary(path) and path != "" -> path
-      _unset -> @dir |> Path.expand() |> Path.join(@filename)
+      _unset -> configured_path()
     end
   end
 
@@ -76,6 +79,13 @@ defmodule Eva.Core.Cluster.Cookie do
   end
 
   # -- Private --
+
+  defp configured_path do
+    case System.get_env("EVA_COOKIE_PATH") do
+      path when is_binary(path) and path != "" -> Path.expand(path)
+      _unset -> @dir |> Path.expand() |> Path.join(@filename)
+    end
+  end
 
   defp from_file(path, contents) do
     cookie = String.trim(contents)
