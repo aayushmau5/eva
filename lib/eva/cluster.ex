@@ -463,12 +463,24 @@ defmodule Eva.Cluster do
       Map.has_key?(state.dropped, key) ->
         restore(state, key, description)
 
+      active_same_process?(state, key, description) ->
+        state
+
       true ->
         case refuse(description, state) do
           nil -> attach(state, description)
           reason -> note(state, description.node, reason)
         end
     end
+  end
+
+  # A scan describes what was unknown when its task started, not what is unknown when its
+  # result lands. Two overlapping scans can therefore both return the same process. The first
+  # result admits it; the second must become a no-op rather than attach it at a new generation.
+  # A different pid is a real restart and still replaces the previous member. Dropped members
+  # are handled by restore/3 before reaching this check.
+  defp active_same_process?(state, key, %Description{pid: pid}) do
+    match?(%{pid: ^pid}, Map.get(state.members, key))
   end
 
   defp detached?(state, %Description{} = description) do

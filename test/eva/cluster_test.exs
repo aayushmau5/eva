@@ -145,6 +145,22 @@ defmodule Eva.ClusterTest do
       assert_receive {:known, second}
       assert MapSet.member?(second, node())
     end
+
+    test "overlapping scans admit the same process only once" do
+      :ok = Cluster.subscribe()
+
+      description = Protocol.description(:extension, "fixture", member_process())
+      found = [{description.node, description}]
+
+      # Both scans started before either result was admitted, so both considered the process
+      # unknown. Stale scan results are still applied, but membership must be rechecked first.
+      send(Cluster, {:scanned, make_ref(), found})
+      send(Cluster, {:scanned, make_ref(), found})
+
+      assert [%{generation: 1}] = Cluster.members(:extension)
+      assert_receive {:cluster_member_up, %{name: "fixture", generation: 1}}
+      refute_receive {:cluster_member_up, _member}, 50
+    end
   end
 
   describe "refusing" do
