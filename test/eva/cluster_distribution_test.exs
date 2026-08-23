@@ -80,6 +80,21 @@ defmodule Eva.Cluster.DistributionTest do
     assert Distribution.listener_binding(port: 9_001) == {:reachable, 9_001}
   end
 
+  test "a reachable Eva has a stable name a configured caller can derive" do
+    assert Distribution.reachable_node_name("100.64.5.20") == :"eva@100.64.5.20"
+  end
+
+  test "reachable Evas on the same host can have distinct configured names" do
+    assert Distribution.reachable_node_name("100.64.5.20", "eva_secondary") ==
+             :"eva_secondary@100.64.5.20"
+  end
+
+  test "a reachable Eva rejects an invalid configured name" do
+    assert_raise ArgumentError, ~r/distribution name/, fn ->
+      Distribution.reachable_node_name("100.64.5.20", "eva@secondary")
+    end
+  end
+
   test "an invalid reachable port is rejected before distribution starts" do
     assert_raise ArgumentError, ~r/distribution port/, fn ->
       Distribution.listener_binding(port: 70_000)

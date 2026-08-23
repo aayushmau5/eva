@@ -19,10 +19,18 @@ defmodule Eva.Cluster.Distribution do
   A member that must initiate its own connection, such as a mobile extension, changes that trust
   boundary: Eva now intentionally accepts an inbound BEAM connection from the tailnet. Giving
   `:distribution` a port opts into a listener bound specifically to Eva's configured or detected
-  tailnet address. The connected node then appears in Eva's normal cluster scan and goes through
-  the same description, allowlist, consent and attach flow as a node Eva dialled:
+  tailnet address. A reachable Eva has the stable name `eva@<address>` so a caller that was given
+  the address and port can derive its node identity without asking epmd. The connected node then
+  appears in Eva's normal cluster scan and goes through the same description, allowlist, consent
+  and attach flow as a node Eva dialled. Configure the instance at launch rather than assigning a
+  port to every Eva in source:
 
-      config :eva, distribution: [port: 9001]
+      EVA_DISTRIBUTION_PORT=9001 iex -S mix
+
+  Two reachable Evas on one machine need distinct ports and names. `EVA_DISTRIBUTION_NAME`
+  changes the part before `@<address>` for that process:
+
+      EVA_DISTRIBUTION_PORT=9002 EVA_DISTRIBUTION_NAME=eva_secondary iex -S mix
 
   With no non-loopback address, startup fails instead of silently exposing another interface.
   """
@@ -107,7 +115,9 @@ defmodule Eva.Cluster.Distribution do
   # -- Private --
 
   defp start_node(opts) do
-    case Listener.start(name_builder(opts), listener_binding(opts)) do
+    binding = listener_binding(opts)
+
+    case Listener.start(name_builder(opts, binding), binding) do
       {:ok, node} ->
         {:ok, node}
 
@@ -124,10 +134,38 @@ defmodule Eva.Cluster.Distribution do
     end
   end
 
-  defp name_builder(opts) do
+  defp name_builder(opts, binding) do
     case Keyword.get(opts, :node_name) do
-      nil -> &node_name/1
+      nil -> default_name_builder(binding, opts)
       name when is_atom(name) -> fn _host -> name end
+    end
+  end
+
+  defp default_name_builder(:loopback, _opts), do: &node_name/1
+
+  defp default_name_builder({:reachable, _port}, opts) do
+    name = Keyword.get(opts, :name, "eva")
+    &reachable_node_name(&1, name)
+  end
+
+  @doc """
+  The stable name used by an Eva that accepts connections at a configured address.
+
+  A reachable Eva is addressed as a service rather than discovered as a local process. Keeping
+  the name stable lets a mobile extension derive it from the address it was configured with. A
+  host running more than one reachable Eva can give each instance a distinct `:name` alongside
+  its port.
+  """
+  @spec reachable_node_name(String.t(), String.t()) :: node()
+  def reachable_node_name(host, name \\ "eva")
+
+  def reachable_node_name(host, name) when is_binary(name) do
+    if Regex.match?(~r/^[a-zA-Z0-9_-]+$/, name) do
+      String.to_atom("#{name}@#{host}")
+    else
+      raise ArgumentError,
+            "distribution name may contain only letters, numbers, underscores and hyphens, " <>
+              "got: #{inspect(name)}"
     end
   end
 

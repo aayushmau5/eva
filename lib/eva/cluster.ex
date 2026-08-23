@@ -15,7 +15,9 @@ defmodule Eva.Cluster do
 
   Joining is not instant: `mix eva.ext.start mcp` lands on the next
   scan rather than the moment it comes up. What it buys is one path — the same one will
-  dial a node on another machine, given its address — and no retry loop on the far side.
+  dial a node on another machine, given its address — and no retry loop on the far side. Eva's
+  normal loopback identity remains per-process; an Eva that explicitly accepts connections at a
+  tailnet address uses a stable service identity so a configured caller can find it directly.
 
   Re-dialling happens out of the same scan. A member whose `:DOWN` arrives is removed, and
   the next scan finds it again if it came back.
