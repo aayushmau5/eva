@@ -117,7 +117,9 @@ defmodule Eva.Cluster.Distribution do
   defp start_node(opts) do
     binding = listener_binding(opts)
 
-    case Listener.start(name_builder(opts, binding), binding) do
+    case Listener.start(name_builder(opts, binding), binding,
+           epmd: Keyword.get(opts, :epmd, true)
+         ) do
       {:ok, node} ->
         {:ok, node}
 
