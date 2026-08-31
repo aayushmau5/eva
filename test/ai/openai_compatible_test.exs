@@ -693,6 +693,63 @@ defmodule Eva.AI.OpenAICompatibleProviderTest do
     assert message["content"] == "sunny"
   end
 
+  test "ToolResultMessage exposes image content in a following user message" do
+    tool_result = %Messages.ToolResultMessage{
+      tool_call_id: "call_1",
+      tool_name: "desktop_screenshot",
+      content: [
+        %Messages.TextContent{text: "Screenshot captured."},
+        %Messages.ImageContent{data: "aGVsbG8=", mime_type: "image/png"}
+      ]
+    }
+
+    messages = run_one_stream([tool_result])
+
+    [%{"role" => "system"}, tool_message, image_message] = messages
+
+    assert tool_message == %{
+             "role" => "tool",
+             "tool_call_id" => "call_1",
+             "name" => "desktop_screenshot",
+             "content" => "Screenshot captured."
+           }
+
+    assert image_message == %{
+             "role" => "user",
+             "content" => [
+               %{"type" => "text", "text" => "Image output from tool desktop_screenshot."},
+               %{
+                 "type" => "image_url",
+                 "image_url" => %{"url" => "data:image/png;base64,aGVsbG8="}
+               }
+             ]
+           }
+  end
+
+  test "tool-result images follow all contiguous tool messages" do
+    results = [
+      %Messages.ToolResultMessage{
+        tool_call_id: "call_1",
+        tool_name: "desktop_screenshot",
+        content: [%Messages.ImageContent{data: "aGVsbG8=", mime_type: "image/png"}]
+      },
+      %Messages.ToolResultMessage{
+        tool_call_id: "call_2",
+        tool_name: "get_weather",
+        content: [%Messages.TextContent{text: "rainy"}]
+      }
+    ]
+
+    messages = run_one_stream(results)
+
+    assert Enum.map(messages, &{&1["role"], &1["tool_call_id"]}) == [
+             {"system", nil},
+             {"tool", "call_1"},
+             {"tool", "call_2"},
+             {"user", nil}
+           ]
+  end
+
   test "CustomMessage is sent as a user message with its text content" do
     custom = %Messages.CustomMessage{custom_type: "env_note", content: "ctx here"}
 
@@ -750,5 +807,28 @@ defmodule Eva.AI.OpenAICompatibleProviderTest do
     assert u1["content"] == "first"
     assert a1["content"] == "second"
     assert u2["content"] == "third"
+  end
+
+  test "UserMessage serializes image content as Chat Completions content parts" do
+    user_message = %Messages.UserMessage{
+      content: [
+        %Messages.TextContent{text: "What is shown?"},
+        %Messages.ImageContent{data: "aGVsbG8=", mime_type: "image/png"}
+      ]
+    }
+
+    messages = run_one_stream([user_message])
+    [%{"role" => "system"}, message] = messages
+
+    assert message == %{
+             "role" => "user",
+             "content" => [
+               %{"type" => "text", "text" => "What is shown?"},
+               %{
+                 "type" => "image_url",
+                 "image_url" => %{"url" => "data:image/png;base64,aGVsbG8="}
+               }
+             ]
+           }
   end
 end

@@ -335,9 +335,11 @@ defmodule Eva.AI.OpenAICompatibleProvider do
     system = [%{role: "system", content: system_prompt}]
 
     messages =
-      Enum.map(messages, fn
-        %Messages.UserMessage{} = user_message ->
-          %{role: "user", content: Messages.UserMessage.text(user_message)}
+      messages
+      |> attach_tool_result_images()
+      |> Enum.map(fn
+        %Messages.UserMessage{content: content} ->
+          %{role: "user", content: serialize_user_content(content)}
 
         %Messages.AssistantMessage{} = assistant_message ->
           %{role: "assistant", content: Messages.AssistantMessage.text(assistant_message)}
@@ -376,6 +378,46 @@ defmodule Eva.AI.OpenAICompatibleProvider do
       |> Enum.reject(&is_nil/1)
 
     system ++ messages
+  end
+
+  defp attach_tool_result_images(messages) do
+    messages
+    |> Enum.chunk_by(&match?(%Messages.ToolResultMessage{}, &1))
+    |> Enum.flat_map(fn chunk ->
+      case Enum.flat_map(chunk, &tool_result_image_content/1) do
+        [] -> chunk
+        image_content -> chunk ++ [%Messages.UserMessage{content: image_content}]
+      end
+    end)
+  end
+
+  defp tool_result_image_content(%Messages.ToolResultMessage{
+         tool_name: tool_name,
+         content: content
+       }) do
+    case Enum.filter(content, &match?(%Messages.ImageContent{}, &1)) do
+      [] ->
+        []
+
+      images ->
+        [
+          %Messages.TextContent{text: "Image output from tool #{tool_name}."} | images
+        ]
+    end
+  end
+
+  defp tool_result_image_content(_message), do: []
+
+  defp serialize_user_content(content) when is_binary(content), do: content
+
+  defp serialize_user_content(content) when is_list(content) do
+    Enum.map(content, fn
+      %Messages.TextContent{text: text} ->
+        %{type: "text", text: text}
+
+      %Messages.ImageContent{data: data, mime_type: mime_type} ->
+        %{type: "image_url", image_url: %{url: "data:#{mime_type};base64,#{data}"}}
+    end)
   end
 
   defp maybe_add_reasoning(message, assistant_message) do
