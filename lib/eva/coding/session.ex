@@ -130,7 +130,7 @@ defmodule Eva.Coding.Session do
     GenServer.call(pid, :title)
   end
 
-  @spec prompt(pid(), prompt :: String.t(), streaming_behaviour :: atom() | nil) ::
+  @spec prompt(pid(), prompt :: Messages.user_content(), streaming_behaviour :: atom() | nil) ::
           :ok | {:error, String.t()}
   def prompt(pid, prompt, streaming_behaviour \\ nil) do
     GenServer.call(pid, {:prompt, prompt, streaming_behaviour})
@@ -575,7 +575,7 @@ defmodule Eva.Coding.Session do
 
     state =
       if match?(%Messages.UserMessage{}, event.message) do
-        try_auto_name_session(event.message.content, state)
+        try_auto_name_session(Messages.UserMessage.text(event.message), state)
       else
         state
       end
@@ -944,6 +944,8 @@ defmodule Eva.Coding.Session do
     }
   end
 
+  defp preprocess_prompt(_state, %Messages.UserMessage{} = message), do: {:continue, message}
+
   # A registered `/command` and a `{:handled, _}` input hook both answer the user without
   # starting a turn. Everything else falls through to the model.
   #
@@ -1034,11 +1036,15 @@ defmodule Eva.Coding.Session do
   end
 
   # Starts a turn. Shared with the extension-initiated path in `handle_info/2`.
-  defp submit_prompt(%__MODULE__{} = state, text) do
+  defp submit_prompt(%__MODULE__{} = state, text) when is_binary(text) do
+    submit_prompt(state, %Messages.UserMessage{content: text})
+  end
+
+  defp submit_prompt(%__MODULE__{} = state, %Messages.UserMessage{} = message) do
     :ok = refresh_tools(state)
 
     {:ok, _harness_state} =
-      Harness.prompt(state.harness_pid, %Messages.UserMessage{content: text})
+      Harness.prompt(state.harness_pid, message)
 
     persist_new_messages(state)
   end

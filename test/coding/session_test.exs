@@ -4,7 +4,8 @@ defmodule RunBashHarness do
   def start_link(running? \\ false, initial_messages \\ []) do
     GenServer.start_link(__MODULE__, %{
       running?: running?,
-      messages: initial_messages
+      messages: initial_messages,
+      last_prompt: nil
     })
   end
 
@@ -32,8 +33,8 @@ defmodule RunBashHarness do
   def handle_call({:update_hooks, _before, _after, _context}, _from, state),
     do: {:reply, :ok, state}
 
-  def handle_call({:prompt, _prompt}, _from, state),
-    do: {:reply, {:ok, state}, state}
+  def handle_call({:prompt, prompt}, _from, state),
+    do: {:reply, {:ok, state}, %{state | last_prompt: prompt}}
 
   def handle_call(:get_state, _from, state), do: {:reply, state, state}
 end
@@ -1183,6 +1184,25 @@ defmodule Eva.Coding.SessionTest do
       }
 
       build_state(config: config, extensions: extensions)
+    end
+  end
+
+  describe "handle_call :prompt" do
+    test "passes a structured user message to the harness unchanged" do
+      {:ok, harness} = RunBashHarness.start_link()
+
+      state = build_state(config: build_session_config(), harness_pid: harness)
+
+      message = %Messages.UserMessage{
+        content: [
+          %Messages.TextContent{text: "What is shown?"},
+          %Messages.ImageContent{data: "aGVsbG8=", mime_type: "image/png"}
+        ]
+      }
+
+      {:reply, :ok, _state} = Session.handle_call({:prompt, message, nil}, nil, state)
+
+      assert %{last_prompt: ^message} = GenServer.call(harness, :get_state)
     end
   end
 
