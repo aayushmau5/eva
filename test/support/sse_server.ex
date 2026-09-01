@@ -35,6 +35,10 @@ defmodule Eva.Test.SseServer do
     GenServer.call(server, {:set_response, response})
   end
 
+  def set_responses(server, responses) when is_list(responses) do
+    GenServer.call(server, {:set_response, responses})
+  end
+
   @doc "Returns `{request_line, headers, body}` of the most recent request."
   @spec last_request(GenServer.server()) :: request() | nil
   def last_request(server) do
@@ -86,6 +90,10 @@ defmodule Eva.Test.SseServer do
 
   def handle_call({:record_request, req}, _from, state) do
     {:reply, :ok, %{state | last_request: req}}
+  end
+
+  def handle_call(:get_response, _from, %{response: [response | rest]} = state) do
+    {:reply, response, %{state | response: rest}}
   end
 
   def handle_call(:get_response, _from, state) do

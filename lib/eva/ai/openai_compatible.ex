@@ -71,19 +71,37 @@ defmodule Eva.AI.OpenAICompatibleProvider do
 
     resolved = Auth.resolve(state.config)
 
-    Finch.build(
-      :post,
-      String.trim_trailing(resolved.base_url, "/") <> "/chat/completions",
-      Auth.headers(resolved, state.config.omit_authorization_header),
-      build_req_body(opts, state)
-    )
-    |> Finch.stream(
-      Eva.Finch,
-      acc,
-      fn event, acc -> handle_stream_event(event, acc, opts.listener_pid) end,
-      receive_timeout: 15_000
-    )
+    request =
+      Finch.build(
+        :post,
+        String.trim_trailing(resolved.base_url, "/") <> "/chat/completions",
+        Auth.headers(resolved, state.config.omit_authorization_header),
+        build_req_body(opts, state)
+      )
+
+    request
+    |> stream_request(acc, opts.listener_pid, 1)
     |> emit_stream_outcome(opts.listener_pid)
+  end
+
+  defp stream_request(request, acc, listener_pid, retries) do
+    result =
+      Finch.stream(
+        request,
+        Eva.Finch,
+        acc,
+        fn event, acc -> handle_stream_event(event, acc, listener_pid) end,
+        receive_timeout: 15_000
+      )
+
+    case result do
+      {:error, %Finch.TransportError{reason: :closed}, %{started: false}}
+      when retries > 0 ->
+        stream_request(request, acc, listener_pid, retries - 1)
+
+      result ->
+        result
+    end
   end
 
   defp handle_stream_event({:status, status}, acc, _listener_pid) do

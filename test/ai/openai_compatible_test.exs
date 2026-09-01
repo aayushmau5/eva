@@ -152,6 +152,25 @@ defmodule Eva.AI.OpenAICompatibleProviderTest do
   # ---------------------------------------------------------------------------
 
   describe "content-only streams" do
+    test "retries once when the connection closes before response content arrives" do
+      {server, pid} = start_provider([])
+
+      SseServer.set_responses(server, [
+        "",
+        sse_response([content_delta("retried"), finish_delta("stop")])
+      ])
+
+      stream(pid, [])
+
+      assert %Events.AssistantStart{} = await_event(Events.AssistantStart)
+      events = collect_events(2_000)
+      assert [%Events.TextDelta{delta: "retried"}] = events_of(events, Events.TextDelta)
+      assert [%Events.AssistantDone{reason: :stop}] = events_of(events, Events.AssistantDone)
+
+      GenServer.stop(pid)
+      SseServer.stop(server)
+    end
+
     test "emits AssistantStart, TextStart, TextDeltas, TextEnd, AssistantDone(:stop)" do
       {server, pid} = start_provider([])
 
